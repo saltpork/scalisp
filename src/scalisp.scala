@@ -1,7 +1,9 @@
 package scalisp
 
 import util.parsing.combinator.RegexParsers
-import collection.mutable.{Map => mMap}
+import java.io.{Reader => jReader}
+import tools.jline.console.ConsoleReader
+import tools.jline.console.history.FileHistory
 
 object `package` {
   // Eval
@@ -50,21 +52,21 @@ object `package` {
         }
       case x @ _ => x
     }
-  val DefaultEnvironment = Map[String, Any](
+  val DefaultEnvironment = List(
       // TODO: These are int only stubs, should promote then evaluate
-      scope += "+"      -> { (xs : List[Any]) => xs.foldLeft(0)(_ + _.asInstanceOf[Int]) },
-      scope += "-"      -> { (xs : List[Any]) => xs.tail.foldLeft(xs.head.asInstanceOf[Int])(_ - _.asInstanceOf[Int]) },
+      "+"      -> { (xs : List[Any]) => xs.foldLeft(0)(_ + _.asInstanceOf[Int]) },
+      "-"      -> { (xs : List[Any]) => xs.tail.foldLeft(xs.head.asInstanceOf[Int])(_ - _.asInstanceOf[Int]) },
 
-      scope += "cons"   -> { (xs : List[Any]) => xs match { 
+      "cons"   -> { (xs : List[Any]) => xs match { 
                               case a :: (b : List[Any]) :: Nil => a :: b
                               case e @ _ => throw Error(s"cons called with illegal args: $e") }
         },
-      scope += "list"   -> { (xs : List[Any]) => List(xs : _*) },
-      scope += "rest"   -> { (xs : List[Any]) => xs match { 
+      "list"   -> { (xs : List[Any]) => List(xs : _*) },
+      "rest"   -> { (xs : List[Any]) => xs match { 
                               case (a : List[Any]) :: Nil => a.tail
                               case e @ _ => println(s"ERROR: $e"); throw Error("rest") }
         },
-      scope += "print"  -> { (xs : List[Any]) => println(Console.YELLOW + xs.foldLeft("")(_ + _))
+      "print"  -> { (xs : List[Any]) => println(Console.YELLOW + xs.foldLeft("")(_ + _)) }
     )
 }
 
@@ -93,19 +95,49 @@ case class Macro(fn : List[Any] => Any)
 
 // Reader
 class Reader extends RegexParsers {
-  override val whiteSpace = """([\t ]*(?<!\\);[^\n\r$]+|[\t ]+)""".r
+  override val whiteSpace = """([\t \n\r]*(?<!\\);[^\n\r$]+|[\t \n\r]+)""".r
   def float  = ("""[-+]?\d+\.\d+""".r | ("""[-+]?\d+""" <~ "f")) ^^ { x => x.toFloat }
   def int    = """[-+]?\d+""".r ^^ { x => x.toInt }
   def string = """(?<!\\)".*?(?<!\\)"""".r ^^ { x => x.drop(1).dropRight(1) }
   def symbol = """[^\d()\s][^\s()]*""".r ^^ { x => Symbol(x) }
   def sexpr  : Parser[Any] = "(" ~> rep1(expr) <~ ")"
   def expr   = (float | int | string | symbol | sexpr)
-  def apply(input: String) : Any = parseAll(expr, input) match {
+  def apply(input : String) : Any = parseAll(expr, input) match {
+      case Success(result, _) => result
+      case failure : NoSuccess => throw ParseError(failure.msg)
+    }
+  def apply(input : jReader) : Any = parseAll(expr, input) match {
       case Success(result, _) => result
       case failure : NoSuccess => throw ParseError(failure.msg)
     }
 }
 
+object REPL {
+  def prompt = Console.BLUE + "scalisp> " + Console.YELLOW
+  val console = {
+    val consoleReader = new ConsoleReader(System.in, new java.io.OutputStreamWriter(System.out))
+    consoleReader setHistory (new FileHistory(new java.io.File(".scalisp-history")))
+    consoleReader setHistoryEnabled true
+    consoleReader setPrompt prompt
+    consoleReader
+  }
+  def main(args : Array[String]) {
+    val reader = new Reader
+    val scope  = Scope(DefaultEnvironment : _*)
+
+    while(true) {
+      console.readLine() match {
+        case l : String =>
+          println(Console.CYAN + eval(reader(l), scope))
+        case _ => 
+          println(Console.RED + "exiting...")
+          System.exit(0)
+      }
+    }
+
+  }
+}
+// Tests
 object Tests {
   // Tests
   implicit class X(a : Any) {
@@ -122,7 +154,7 @@ object Tests {
     val reader = new Reader
     val scope  = Scope(DefaultEnvironment : _*)
 
-    scope += "function" -> { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) },
+    scope += "function" -> { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
 
     reader("function") shouldBe Symbol("function")
     reader(""""function"""") shouldBe "function"
@@ -146,7 +178,7 @@ object Tests {
     eval(reader("(quote (1 2 3))"), scope) shouldBe List(1, 2, 3)
     eval(reader("(test (+ 1 4))"), scope) shouldBe -3
     eval(reader("(quote (+ 1 4))"), scope) shouldBe List('+, 1, 4)
-    eval(reader("(macro m (x) (println x))"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(macro m (x) (print x))"), scope).toString shouldBe "Macro(<function1>)"
     eval(reader("(m (+ 1 3))"), scope) shouldBe Unit
     eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope).toString shouldBe "Macro(<function1>)"
     eval(reader("(define addxy (x y) (+ x y))"), scope).toString shouldBe "<function1>"
