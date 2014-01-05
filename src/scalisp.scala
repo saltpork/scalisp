@@ -1,14 +1,41 @@
 package scalisp
 
 import util.parsing.combinator.RegexParsers
+import collection.mutable.{Map => mMap, HashMap}
 import java.io.{Reader => jReader}
 import tools.jline.console.ConsoleReader
 import tools.jline.console.history.FileHistory
 
 object `package` {
+  def mapFromList(list : List[Any]) = Map(list.grouped(2).map { case List(a, b) => a -> b }.toList : _*)
+
   // ------------------------------------------------------------------------------------------------------------
   // Eval
   // ------------------------------------------------------------------------------------------------------------
+  def countSplice(tree : Any, depth : Int = 1) : (Int, Any) = tree match {
+      case (Symbol("splice") | Symbol("spliceseq")) :: x :: Nil => countSplice(x, depth = depth + 1)
+      case rest @ _ => depth -> rest
+    }
+  def splice(expr : Any, scope : Scope, depth : Int = 1) : Any = expr match {
+      case Symbol("quasiquote") :: x :: Nil => 
+        List('quasiquote, splice(x, scope, depth = depth + 1))
+      case full @ (Symbol("splice") :: x :: Nil) => 
+        val (count, tail) = countSplice(x)
+        if (depth == count) eval(tail, scope)
+        else full
+      case full @ (Symbol("spliceseq") :: x :: Nil) => 
+        val (count, tail) = countSplice(x)
+        if (depth == count) List('paste, eval(x, scope))
+        else full
+      case args : Map[_, _] =>
+        args map { case (k, v) => splice(k, scope, depth) -> splice(v, scope, depth) }
+      case args : Iterable[Any] =>
+        args.flatMap(ex => splice(ex, scope, depth) match { 
+                       case List('paste, x : Seq[Any]) => x
+                       case x @ _ => List(x)
+                     })
+      case ex @ _ => ex
+    }
   def eval(expr : Any, scope : Scope) : Any = expr match {
       case Symbol(name) => scope(name)
       case args : List[Any] =>
@@ -24,6 +51,8 @@ object `package` {
             }
           case Symbol("lambda") :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
           case Symbol("quote") :: rest :: Nil => rest
+          case Symbol("quasiquote") :: rest :: Nil => println("XXX: " + rest); splice(rest, scope)
+          case sp @ ((Symbol("splice") | Symbol("spliceseq")) :: x :: Nil) => sp // don't deeply eval beyond this point
           case (Symbol("set!") | Symbol("def")) :: Symbol(name) :: value :: Nil =>
             val res = eval(value, scope)
             scope += name -> res
@@ -39,10 +68,10 @@ object `package` {
                             })
             scope += name -> mac
             mac
-          case Symbol("if") :: condExpr :: then :: alt :: Nil =>
+          case Symbol("if") :: condExpr :: alt1 :: alt2 :: Nil =>
             val cond = eval(condExpr, scope).asInstanceOf[Boolean]
-            if (cond) eval(then, scope)
-            else eval(alt, scope)
+            if (cond) eval(alt1, scope)
+            else eval(alt2, scope)
           case fn :: rest => // Function call
             eval(fn, scope) match {
               case Macro(mac) =>
@@ -56,6 +85,8 @@ object `package` {
             //else throw Error(s"Function ${fn} not defined")
           
         }
+      case map : Map[_, _] => map.map { case (k, v) => eval(k, scope) -> eval(v, scope) }
+      case iter : Iterable[Any] => iter.map(v => eval(v, scope))
       case x @ _ => x
     }
 
@@ -129,21 +160,38 @@ class Reader extends RegexParsers {
   //  + etc.
   val FloatWithDotMatcher  = """[-+]?[0-9]*\.[0-9]+([eE][-+]?[0-9]+)?[Ff]?""".r
   val FloatNoDotMatcher    = """[-+]?[0-9]*[0-9]+([eE][-+]?[0-9]+)?[Ff]""".r
+  val readTable            = mMap[Char, Parser[Any]](
+      '#'  -> ("{" ~> rep(expr) <~ "}" ^^ { _.toSet }),
+      '{'  -> (rep(expr) <~ "}" ^^ { ex => mapFromList(ex) }),
+      '['  -> (rep(expr) <~ "]" ^^ { _.toVector }),
+      '\'' -> (expr ^^ { ex => List('quote, ex) }),
+      '`'  -> (expr ^^ { ex => List('quasiquote, ex) }),
+      '~'  -> (opt("@") ~ expr ^^ { 
+                 case Some("@") ~ ex => List('spliceseq, ex)
+                 case None ~ ex      => List('splice, ex) })
+    )
 
   override val whiteSpace = """([\s\n\r]*(?<!\\);[^\n\r$]+[\n\r\s$]*|[\s\n\r]+)""".r // TODO: doesn't handle strings containing ';'
 
   def double   = """[-+]?[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?[dD]""".r ^^ { x => x.toDouble }
   def float    = (FloatWithDotMatcher | FloatNoDotMatcher ) ^^ { x => x.toFloat }
   def int      = """[-+]?\d+""".r ^^ { x => x.toInt }
-  def uchar    = """\\(u[\da-fA-F]{4})""".r ^^ { x => Integer.parseInt(x.drop(3), 16).toChar }
-  def achar    = """\\[\da-fA-F]{2}""".r ^^ { x => Integer.parseInt(x.drop(2), 16).toChar }
-  def char     = """\\.""".r ^^ { x => augmentString(x)(2) }
+  def uchar    = """\\(u[\da-fA-F]{4})""".r ^^ { x => Integer.parseInt(x.drop(2), 16).toChar }
+  def achar    = """\\[\da-fA-F]{2}""".r ^^ { x => Integer.parseInt(x.drop(1), 16).toChar }
+  def char     = """\\.""".r ^^ { x => augmentString(x)(1) }
   def string   = """(?<!\\)".*?(?<!\\)"""".r ^^ { x => x.drop(1).dropRight(1) }
   def bools    = """(?iu)(true|false)""".r ^^ { x => x.toLowerCase match { case "true" => true; case "false" => false } }
-  //def dispatch = """[#'`,@;^]""".r ^^ { x => readTable(x) }
-  def symbol   = """[^\d()\s][^\s()]*""".r ^^ { x => Symbol(x) }
-  def sexpr  : Parser[Any] = "(" ~> rep1(expr) <~ ")"
-  def expr     = (double | float | int | uchar | achar | char | string | bools | symbol | sexpr)
+  def d_hash   = "#" ~> readTable('#')
+  def d_quote  = "'" ~> readTable('\'')
+  def d_tilde  = "~" ~> readTable('~')
+  def d_quasi  = "`" ~> readTable('`')
+  def d_at     = "@" ~> readTable('@')
+  def d_ocurly = "{" ~> readTable('{')
+  def d_obrac  = "[" ~> readTable('[')
+  def symbol   = """[^\d(){}#'`,@~;~\[\]^\s][^\s()#'`,@~;^{}~\[\]]*""".r ^^ { x => Symbol(x) }
+  def sexpr  : Parser[Any] = "(" ~> rep(expr) <~ ")"
+  def expr   : Parser[Any]  = (double | float | int | uchar | achar | char | string | bools | symbol | sexpr | 
+                                 d_hash | d_quote | d_ocurly | d_obrac | d_quasi | d_tilde)
 
   def apply(input : String) : Any = parseAll(expr, input) match {
       case Success(result, _) => result
@@ -248,9 +296,14 @@ object Tests {
     reader("(function 2.2)") shouldBe List(Symbol("function"), 2.2f)
     reader("(lambda (x) (+ x 1))") shouldBe List(Symbol("lambda"), List(Symbol("x")), List(Symbol("+"), Symbol("x"), 1))
 
-    header("Read and evaluate")
-    eval(reader("(function 2.2 3.3 (function 1.0 2.0))"), scope) shouldBe 8.5f
-    eval(reader("((lambda (x) (+ x 1)) 1)"), scope) shouldBe 2
+    header("Reading with reader macros")
+    reader("#{a b c}") shouldBe Set('a, 'b, 'c)
+    reader("'(a b c)") shouldBe List('quote, List('a, 'b, 'c))
+    reader("{a b c d}") shouldBe Map('a -> 'b, 'c -> 'd)
+    reader("[a b c d]") shouldBe Vector('a, 'b, 'c, 'd)
+    reader("[a #{ b b } (c c) [d d]]") shouldBe Vector('a, Set('b), List('c, 'c), Vector('d, 'd))
+    reader("#{{a a b b} [b b] #{c d}}") shouldBe Set(Map('a -> 'a, 'b -> 'b), Vector('b, 'b), Set('c, 'd))
+    reader("`(test ~x ~@y)") shouldBe List('quasiquote, List('test, List('splice, 'x), List('spliceseq, 'y)))
 
     header("Special forms")
     eval(reader("(if true 1 2)"), scope) shouldBe 1
@@ -265,6 +318,17 @@ object Tests {
     eval(reader("(add-y 4)"), scope) shouldBe 8
     eval(reader("(add-y 1)"), scope) shouldBe 5
 
+    header("Read and evaluate")
+    eval(reader("(function 2.2 3.3 (function 1.0 2.0))"), scope) shouldBe 8.5f
+    eval(reader("((lambda (x) (+ x 1)) 1)"), scope) shouldBe 2
+    eval(reader("`(test ~y ~y)"), scope) shouldBe List('test, 4, 4)
+    eval(reader("(set! z '(3 2 1))"), scope) shouldBe List(3, 2, 1)
+    eval(reader("{ y y }"), scope) shouldBe Map(4 -> 4)
+    eval(reader("{ y y 1 z }"), scope) shouldBe Map(4 -> 4, 1 -> List(3, 2, 1))
+    eval(reader("[ y y { 1 z } ]"), scope) shouldBe Vector(4, 4, Map(1 -> List(3, 2, 1)))
+    eval(reader("#{(incr 10) y}"), scope) shouldBe Set(11, 4)
+
+
     header("Macros and quoting")
     eval(reader("(quote (1 2 3))"), scope) shouldBe List(1, 2, 3)
     eval(reader("(quote (+ 1 4))"), scope) shouldBe List('+, 1, 4)
@@ -275,7 +339,15 @@ object Tests {
     eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope).toString shouldBe "Macro(<function1>)"
     eval(reader("(define addxy (x y) (+ x y))"), scope).toString shouldBe "<function1>"
     eval(reader("(addxy 1 3)"), scope) shouldBe 4
-
+    eval(reader("(macro def2 (name args body) `(def ~name (lambda ~args ~body)))"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(def2 addxy2 (x y) (+ x y))"), scope).toString shouldBe "<function1>"
+    eval(reader("(addxy2 1 3)"), scope) shouldBe 4
+    eval(reader("`(test ~y ~@z)"), scope) shouldBe List('test, 4, 3, 2, 1)
+    eval(reader("`{ ~y ~y }"), scope) shouldBe Map(4 -> 4)
+    eval(reader("((lambda (y) `(print `(+ ~~y ~@z))) 7)"), scope) shouldBe List('print, List('quasiquote, List('+, 7, List('spliceseq, 'z))))
+    eval(reader("(macro twolevel (x) `(macro secondlevel (y) `(- ~~x ~y)))"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(twolevel 10)"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(secondlevel 5)"), scope) shouldBe 5
     summary
   }
 }
