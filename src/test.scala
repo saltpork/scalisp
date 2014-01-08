@@ -159,7 +159,7 @@ object Tests {
     eval(reader("(twolevel 10)"), scope).toString shouldBe "Macro(<function1>)"
     eval(reader("(secondlevel 5)"), scope) shouldBe 5
 
-    header("Multimethods and LFuncs")
+    header("Multimethods and dispatch")
     scope("mult-method") = MultiMethod({ case Tuple1(a : Int) => 666 }, { case Tuple1(a : String) => "test" }, { case Tuple2(a : String, b : Int) => s"$a -> $b" })
     eval(reader("(mult-method 1)"), scope) shouldBe 666
     eval(reader("(mult-method \"1\")"), scope) shouldBe "test"

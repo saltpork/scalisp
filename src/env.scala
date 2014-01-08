@@ -11,7 +11,6 @@ object `package` {
       "+<int>"       -> { (xs : List[Any]) => xs.head.asInstanceOf[Int] + xs.tail.head.asInstanceOf[Int] },
       "*<int>"       -> { (xs : List[Any]) => xs.head.asInstanceOf[Int] * xs.tail.head.asInstanceOf[Int] },
       "/<int>"       -> { (xs : List[Any]) => xs.head.asInstanceOf[Int] / xs.tail.head.asInstanceOf[Int] },
-      "+<lf>"        -> LFunc2(typedFunctor = (a : Int, b : Int) => a + b),
       "c+"           -> ({ case List((a : Int), (b : Int)) => a + b } : PartialFunction[List[Any], Any]),
       "+"            -> MultiMethod({ case (a : Int, b : Int) => a + b
                                       case (a : Int, b : Float) => a + b
@@ -70,7 +69,7 @@ object `package` {
       },
 
       // Booleans
-      "not"          -> LFunc1(typedFunctor = (a : Boolean) => !a),
+      "not"          -> MultiMethod({ case Tuple1(a : Boolean) => !a }),
       // and/or are macros
 
       // Collections
@@ -89,14 +88,14 @@ object `package` {
       "print"       -> { (xs : List[Any]) => println(Console.YELLOW + xs.foldLeft("")(_ + _)) },
 
       // Strings and symbols
-      "string"      -> LFunc1(typedFunctor = (a : Any) => a match { case Symbol(b) => b; case _ => lispString(a) }),
-      "symbol"      -> LFunc1(typedFunctor = (a : String) => Symbol(a)),
-      "trim"        -> LFunc1(typedFunctor = (a : String) => a.trim),
-      "length"      -> LFunc1(typedFunctor = (a : String) => a.trim),
-      "lower-case"  -> LFunc1(typedFunctor = (a : String) => a.toLowerCase),
-      "upper-case"  -> LFunc1(typedFunctor = (a : String) => a.toUpperCase),
-      "substring"   -> LFunc3(typedFunctor = (a : String, start : Int, end : Int) => a.substring(start, end)),
-      "replace"     -> LFunc3(typedFunctor = (a : String, find : String, replace : String) => a.replace(find, replace)),
-      "replace-all" -> LFunc3(typedFunctor = (a : String, find : String, replace : String) => a.replace(find, replace))
+      "string"      -> MultiMethod({ case Tuple1(Symbol(b)) => b; case Tuple1(a @ _) => lispString(a) }),
+      "symbol"      -> MultiMethod({ case Tuple1(a : String) => Symbol(a) }),
+      "trim"        -> MultiMethod({ case Tuple1(a : String) => a.trim }),
+      "length"      -> MultiMethod({ case Tuple1(a : String) => a.trim }),
+      "lower-case"  -> MultiMethod({ case Tuple1(a : String) => a.toLowerCase }),
+      "upper-case"  -> MultiMethod({ case Tuple1(a : String) => a.toUpperCase }),
+      "substring"   -> MultiMethod({ case (a : String, start : Int, end : Int) => a.substring(start, end) }),
+      "replace"     -> MultiMethod({ case (a : String, find : String, replace : String) => a.replace(find, replace) }),
+      "replace-all" -> MultiMethod({ case (a : String, find : String, replace : String) => a.replaceAll(find, replace) })
     )
 }

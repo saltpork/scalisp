@@ -46,8 +46,10 @@ object `package` {
 
             { (xs : List[Any]) =>
               val newScope = Scope(scope, newBindings = (symargs.map(_.name) zip xs) : _*)
-              for (l <- body.dropRight(1)) eval(l, newScope)
-              eval(body.last, newScope)
+              var res : Any = 0
+              for (l <- body) res = eval(l, newScope)
+              //eval(body.last, newScope)
+              res
             }
           case Symbol("lambda") :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
           case Symbol("quote") :: rest :: Nil => rest
@@ -135,59 +137,8 @@ class MultiMethod(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBu
     fn(argTuple)
   }
 }
-
 object MultiMethod {
   def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod(ArrayBuffer(methods : _*))
-}
-
-class MultiMethod2(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[Product, Any] {  
-  def defMethod(m : PartialFunction[Product, Any]) = methods += m
-  def apply(args : Product) = {
-    methods.find(_.isDefinedAt(args)) match {
-      case Some(f) => f(args)
-      case None => throw ArgumentError(s"No method matches $args")
-    }
-  }
-}
-
-object MultiMethod2 {
-  def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod2(ArrayBuffer(methods : _*))
-}
-
-class MultiMethod3(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[Product, Any] {  
-  //def defMethod(m : PartialFunction[Product, Any]) = methods += m
-  val fn = methods.reduce(_ orElse _)
-  def apply(args : Product) = fn(args)
-}
-
-object MultiMethod3 {
-  def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod3(ArrayBuffer(methods : _*))
-}
-
-// This is a very naive and inefficient implementation of a dynamic wrapper, should be much smarter and use invoke dynamic
-abstract class LFuncMeta[O](val arity : Int) {
-  def func(args : List[Any]) : O
-  def checkArity(args : List[Any]) = arity == args.length
-  def coerce[A](i : Any) = i.asInstanceOf[A]
-  def apply(args : List[Any]) : Any = {
-    if (!checkArity(args)) throw ArgumentError(s"function requires $arity arguments, but ${args.length} were provided")
-    func(args).asInstanceOf[Any]
-  }
-}
-case class LFunc0[O](val typedFunctor : Function0[O]) extends LFuncMeta[O](0) with Function1[List[Any], Any] {
-  def func(args : List[Any]) : O = typedFunctor()
-}
-case class LFunc1[I, O](val typedFunctor : Function1[I, O]) extends LFuncMeta[O](1) with Function1[List[Any], Any] {
-  def func(args : List[Any]) : O = typedFunctor(coerce[I](args(0)))
-}
-case class LFunc2[I1, I2, O](val typedFunctor : Function2[I1, I2, O]) extends LFuncMeta[O](2) with Function1[List[Any], Any] {
-  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)))
-}
-case class LFunc3[I1, I2, I3, O](val typedFunctor : Function3[I1, I2, I3, O]) extends LFuncMeta[O](3) with Function1[List[Any], Any] {
-  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)), coerce[I3](args(2)))
-}
-case class LFunc4[I1, I2, I3, I4, O](val typedFunctor : Function4[I1, I2, I3, I4, O]) extends LFuncMeta[O](4) with Function1[List[Any], Any] {
-  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)), coerce[I3](args(2)), coerce[I4](args(3)))
 }
 
 // ------------------------------------------------------------------------------------------------------------
@@ -289,12 +240,6 @@ object REPL {
     val reader = new Reader
     val scope  = Scope(lib.DefaultEnvironment : _*)
     var x = 0
-    scope("clear")  = { (xs : List[Any]) => x = 0; x }
-    scope("incr")   = { (xs : List[Any]) => x += xs(0).asInstanceOf[Int]; x }
-    scope("multi1") = MultiMethod({ case Tuple1(a : Int) => x += a; x })
-    scope("multi3") = MultiMethod({ case Tuple1(a : Int) => x += a; x }, 
-                                     { case Tuple1(a : String) => "test" }, 
-                                     { case Tuple2(a : String, b : Int) => s"$a -> $b" })
 
     while(true) {
       console.readLine() match {
