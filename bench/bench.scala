@@ -96,4 +96,14 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
      using(ranges) in { iteration => eval(ast, scope) }
    }
 
+   performance of "Fibo" in {
+     eval(reader("(set! fibo (lambda (x) (if (< x 2) 1 (+ (fibo (- x 1)) (fibo (- x 2))))))"), scope)
+     val start = System.nanoTime
+     val ast = reader("(fibo 40)")
+
+     println("FIBO: " + eval(ast, scope))
+     val dur = System.nanoTime - start
+     println(s"FIBO: ${dur / 1e9}")
+     using(ranges) in { iteration => eval(ast, scope) }
+   }
 }

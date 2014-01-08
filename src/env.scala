@@ -62,6 +62,26 @@ object `package` {
                                              case (a : Float, b : Float) => math.pow(a, b)
                                              case (a : Float, b : Double) => math.pow(a, b)
                                            }),
+      Symbol("<")           -> MultiMethod({ case (a : Int, b : Int) => a < b
+                                             case (a : Int, b : Float) => a < b
+                                             case (a : Int, b : Double) => a < b
+                                             case (a : Double, b : Int) => a < b
+                                             case (a : Double, b : Float) => a < b
+                                             case (a : Double, b : Double) => a < b
+                                             case (a : Float, b : Int) => a < b
+                                             case (a : Float, b : Float) => a < b
+                                             case (a : Float, b : Double) => a < b
+                                           }),
+      Symbol(">")           -> MultiMethod({ case (a : Int, b : Int) => a < b
+                                             case (a : Int, b : Float) => a < b
+                                             case (a : Int, b : Double) => a < b
+                                             case (a : Double, b : Int) => a < b
+                                             case (a : Double, b : Float) => a < b
+                                             case (a : Double, b : Double) => a < b
+                                             case (a : Float, b : Int) => a < b
+                                             case (a : Float, b : Float) => a < b
+                                             case (a : Float, b : Double) => a < b
+                                           }),
       Symbol("loop")        -> { (xs : List[Any]) =>
         val n = xs(0).asInstanceOf[Int]
         val body = xs(1).asInstanceOf[Function1[List[Any], Any]]

@@ -19,12 +19,12 @@ object `package` {
       case rest @ _ => depth -> rest
     }
   def splice(expr : Any, scope : Scope, depth : Int = 1) : Any = expr match {
-      case Symbol("quasiquote") :: x :: Nil => List('quasiquote, splice(x, scope, depth = depth + 1))
+      case 'quasiquote :: x :: Nil => List('quasiquote, splice(x, scope, depth = depth + 1))
       case full @ (Symbol("splice") :: x :: Nil) => 
         val (count, tail) = countSplice(x)
         if (depth == count) eval(tail, scope)
         else full
-      case full @ (Symbol("spliceseq") :: x :: Nil) => 
+      case full @ ('spliceseq :: x :: Nil) => 
         val (count, tail) = countSplice(x)
         if (depth == count) List('paste, eval(x, scope))
         else full
@@ -41,21 +41,25 @@ object `package` {
       case args : List[Any] =>
         args match {
           // Special forms
-          case Symbol("lambda") :: (fargs : List[Any]) :: body =>
-            if (body.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
-            val symargs = fargs.map { x => assert(x.isInstanceOf[Symbol], s"lambda argument $x is not a string!"); x.asInstanceOf[Symbol] }
+          case 'lambda :: (fargs : List[Any]) :: body =>
+            val barr = body.toArray
+            if (barr.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
+            val symargs  = fargs.map { x => assert(x.isInstanceOf[Symbol], s"lambda argument $x is not a string!"); x.asInstanceOf[Symbol] }
 
             { (xs : List[Any]) =>
               val newScope = Scope(scope, newBindings = (symargs zip xs) : _*)
-              var res : Any = 0
-              for (l <- body) res = eval(l, newScope)
-              res
+              var idx = 0
+              while(idx < (barr.length-1)) {
+                eval(barr(idx), newScope)
+                idx += 1
+              }
+              eval(barr(barr.length - 1), newScope)
             }
-          case Symbol("lambda") :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
-          case Symbol("quote") :: rest :: Nil => rest
-          case Symbol("quasiquote") :: rest :: Nil => splice(rest, scope)
-          case sp @ ((Symbol("splice") | Symbol("spliceseq")) :: x :: Nil) => sp // don't deeply eval beyond this point
-          case (Symbol("set!") | Symbol("def")) :: (name : Symbol) :: value :: Nil =>
+          case 'lambda :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
+          case 'quote :: rest :: Nil => rest
+          case 'quasiquote :: rest :: Nil => splice(rest, scope)
+          case sp @ (('splice | 'spliceseq) :: x :: Nil) => sp
+          case (Symbol("set!") | 'def) :: (name : Symbol) :: value :: Nil =>
             val res = eval(value, scope)
             scope(name) = res
             res
@@ -70,7 +74,7 @@ object `package` {
                             })
             scope(name) = mac
             mac
-          case Symbol("if") :: condExpr :: alt1 :: alt2 :: Nil =>
+          case 'if :: condExpr :: alt1 :: alt2 :: Nil =>
             val cond = eval(condExpr, scope).asInstanceOf[Boolean]
             if (cond) eval(alt1, scope)
             else eval(alt2, scope)
