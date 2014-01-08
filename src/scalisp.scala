@@ -1,10 +1,12 @@
 package scalisp
 
-import util.parsing.combinator.RegexParsers
-import collection.mutable.{Map => mMap, HashMap}
+import util.parsing.combinator.{RegexParsers, PackratParsers}
+import collection.mutable.{Map => mMap, HashMap, ArrayBuffer}
 import java.io.{Reader => jReader}
 import tools.jline.console.ConsoleReader
 import tools.jline.console.history.FileHistory
+import language.dynamics
+import annotation.tailrec
 
 object `package` {
   def mapFromList(list : List[Any]) = Map(list.grouped(2).map { case List(a, b) => a -> b }.toList : _*)
@@ -17,8 +19,7 @@ object `package` {
       case rest @ _ => depth -> rest
     }
   def splice(expr : Any, scope : Scope, depth : Int = 1) : Any = expr match {
-      case Symbol("quasiquote") :: x :: Nil => 
-        List('quasiquote, splice(x, scope, depth = depth + 1))
+      case Symbol("quasiquote") :: x :: Nil => List('quasiquote, splice(x, scope, depth = depth + 1))
       case full @ (Symbol("splice") :: x :: Nil) => 
         val (count, tail) = countSplice(x)
         if (depth == count) eval(tail, scope)
@@ -27,8 +28,7 @@ object `package` {
         val (count, tail) = countSplice(x)
         if (depth == count) List('paste, eval(x, scope))
         else full
-      case args : Map[_, _] =>
-        args map { case (k, v) => splice(k, scope, depth) -> splice(v, scope, depth) }
+      case args : Map[_, _] => args map { case (k, v) => splice(k, scope, depth) -> splice(v, scope, depth) }
       case args : Iterable[Any] =>
         args.flatMap(ex => splice(ex, scope, depth) match { 
                        case List('paste, x : Seq[Any]) => x
@@ -51,11 +51,11 @@ object `package` {
             }
           case Symbol("lambda") :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
           case Symbol("quote") :: rest :: Nil => rest
-          case Symbol("quasiquote") :: rest :: Nil => println("XXX: " + rest); splice(rest, scope)
+          case Symbol("quasiquote") :: rest :: Nil => splice(rest, scope)
           case sp @ ((Symbol("splice") | Symbol("spliceseq")) :: x :: Nil) => sp // don't deeply eval beyond this point
           case (Symbol("set!") | Symbol("def")) :: Symbol(name) :: value :: Nil =>
             val res = eval(value, scope)
-            scope += name -> res
+            scope(name) = res
             res
           case Symbol("macro") :: Symbol(name) :: (margs : List[Any]) :: body =>
             val symargs = margs.map { x => assert(x.isInstanceOf[Symbol], s"macro argument $x is not a string!"); x.asInstanceOf[Symbol] }
@@ -66,7 +66,7 @@ object `package` {
                               val x = eval(body.last, newScope)
                               x
                             })
-            scope += name -> mac
+            scope(name) = mac
             mac
           case Symbol("if") :: condExpr :: alt1 :: alt2 :: Nil =>
             val cond = eval(condExpr, scope).asInstanceOf[Boolean]
@@ -95,67 +95,137 @@ object `package` {
   // ------------------------------------------------------------------------------------------------------------
   def lispString(expr : Any) : String =
     expr match {
-      case Symbol(s)     => s"'$s"
-      case List(xs @ _*) => s"(${xs.map(e => lispString(e)).mkString(" ")})"
-      case c : Char      => s"#\\$c"
-      case e @ _         => e.toString
+      case Symbol(s)          => s"'$s"
+      case List(xs @ _*)      => s"(${xs.map(e => lispString(e)).mkString(" ")})"
+      case Vector(xs @ _*)    => s"[${xs.map(e => lispString(e)).mkString(" ")}]"
+      case xs : Set[_]        => s"#{${xs.map(e => lispString(e)).mkString(" ")}}"
+      case xs : Map[_, _]     => s"{${xs.map{ case (k, v) => lispString(k) + " " + lispString(v) }.mkString(" ")}}"
+      case c : Char           => s"#\\$c"
+      case e @ _              => e.toString
     }
-
-  // ------------------------------------------------------------------------------------------------------------
-  // Basic function environment
-  // ------------------------------------------------------------------------------------------------------------
-  val DefaultEnvironment = List(
-      // TODO: These are int only stubs, should promote then evaluate
-      "+"      -> { (xs : List[Any]) => xs.foldLeft(0)(_ + _.asInstanceOf[Int]) },
-      "-"      -> { (xs : List[Any]) => xs.tail.foldLeft(xs.head.asInstanceOf[Int])(_ - _.asInstanceOf[Int]) },
-
-      "cons"   -> { (xs : List[Any]) => xs match { 
-                              case a :: (b : List[Any]) :: Nil => a :: b
-                              case e @ _ => throw Error(s"cons called with illegal args: $e") }
-        },
-      "list"   -> { (xs : List[Any]) => List(xs : _*) },
-      "rest"   -> { (xs : List[Any]) => xs match { 
-                              case (a : List[Any]) :: Nil => a.tail
-                              case e @ _ => println(s"ERROR: $e"); throw Error("rest") }
-        },
-      "print"  -> { (xs : List[Any]) => println(Console.YELLOW + xs.foldLeft("")(_ + _)) }
-    )
 }
 
-case class Macro(fn : List[Any] => Any)
-
 // ------------------------------------------------------------------------------------------------------------
-// exceptions
+// Exceptions and helpers
 // ------------------------------------------------------------------------------------------------------------
 case class Error(e : String) extends Exception(e)
 case class ParseError(e : String) extends Exception(e)
+case class ArgumentError(e : String) extends Exception(e)
+case class NotImplementedError(e : String) extends Exception(e)
+case class BindingNotFound(e : String) extends Exception(e)
+
+case class Macro(fn : List[Any] => Any)
+
+class MultiMethod(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[List[Any], Any] {  
+  case class Zero()
+  val fail : PartialFunction[Product, Any] = { case args @ _ => throw ArgumentError(s"No method matches $args") }
+  val fn = methods.reduce(_ orElse _) orElse fail 
+  def defMethod(m : PartialFunction[Product, Any]) = methods += m
+  def apply(args : List[Any]) = {
+    val argTuple = args.length match {
+        case 0 => Zero()
+        case 1 => Tuple1(args(0))
+        case 2 => args(0) -> args(1)
+        case 3 => (args(0), args(1), args(2))
+        case 4 => (args(0), args(1), args(2), args(3))
+        case 5 => (args(0), args(1), args(2), args(3), args(4))
+        case 6 => (args(0), args(1), args(2), args(3), args(4), args(5))
+        case 7 => (args(0), args(1), args(2), args(3), args(4), args(5), args(6))
+      }
+    fn(argTuple)
+  }
+}
+
+object MultiMethod {
+  def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod(ArrayBuffer(methods : _*))
+}
+
+class MultiMethod2(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[Product, Any] {  
+  def defMethod(m : PartialFunction[Product, Any]) = methods += m
+  def apply(args : Product) = {
+    methods.find(_.isDefinedAt(args)) match {
+      case Some(f) => f(args)
+      case None => throw ArgumentError(s"No method matches $args")
+    }
+  }
+}
+
+object MultiMethod2 {
+  def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod2(ArrayBuffer(methods : _*))
+}
+
+class MultiMethod3(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[Product, Any] {  
+  //def defMethod(m : PartialFunction[Product, Any]) = methods += m
+  val fn = methods.reduce(_ orElse _)
+  def apply(args : Product) = fn(args)
+}
+
+object MultiMethod3 {
+  def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod3(ArrayBuffer(methods : _*))
+}
+
+// This is a very naive and inefficient implementation of a dynamic wrapper, should be much smarter and use invoke dynamic
+abstract class LFuncMeta[O](val arity : Int) {
+  def func(args : List[Any]) : O
+  def checkArity(args : List[Any]) = arity == args.length
+  def coerce[A](i : Any) = i.asInstanceOf[A]
+  def apply(args : List[Any]) : Any = {
+    if (!checkArity(args)) throw ArgumentError(s"function requires $arity arguments, but ${args.length} were provided")
+    func(args).asInstanceOf[Any]
+  }
+}
+case class LFunc0[O](val typedFunctor : Function0[O]) extends LFuncMeta[O](0) with Function1[List[Any], Any] {
+  def func(args : List[Any]) : O = typedFunctor()
+}
+case class LFunc1[I, O](val typedFunctor : Function1[I, O]) extends LFuncMeta[O](1) with Function1[List[Any], Any] {
+  def func(args : List[Any]) : O = typedFunctor(coerce[I](args(0)))
+}
+case class LFunc2[I1, I2, O](val typedFunctor : Function2[I1, I2, O]) extends LFuncMeta[O](2) with Function1[List[Any], Any] {
+  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)))
+}
+case class LFunc3[I1, I2, I3, O](val typedFunctor : Function3[I1, I2, I3, O]) extends LFuncMeta[O](3) with Function1[List[Any], Any] {
+  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)), coerce[I3](args(2)))
+}
+case class LFunc4[I1, I2, I3, I4, O](val typedFunctor : Function4[I1, I2, I3, I4, O]) extends LFuncMeta[O](4) with Function1[List[Any], Any] {
+  def func(args : List[Any]) : O = typedFunctor(coerce[I1](args(0)), coerce[I2](args(1)), coerce[I3](args(2)), coerce[I4](args(3)))
+}
 
 // ------------------------------------------------------------------------------------------------------------
 // Scope
 // ------------------------------------------------------------------------------------------------------------
-class Scope(var symtab : Map[String, Any] = Map[String, Any]()) {
-  def +=(kv : (String, Any)) { symtab = symtab + kv }
-  def copy = new Scope(symtab)
-  def apply(s : String) = symtab(s)
-  def isDefinedAt(s : String) = symtab isDefinedAt s
+class Scope(var symtab : mMap[String, Any] = mMap[String, Any](), root : Scope) {
+  @tailrec final def getDefiningScope(k : String) : Option[mMap[String, Any]] =
+    if (symtab.isDefinedAt(k)) Some(symtab)
+    else if (root != null) root.getDefiningScope(k)
+    else None
+  final def update(k : String, v : Any) = getDefiningScope(k) match {
+      case Some(st) => st(k) = v
+      case None => symtab(k) = v
+    }
+  final def apply(s : String) : Any = getDefiningScope(s) match {
+      case Some(st) => st(s)
+      case None => BindingNotFound(s"Can't find binding for $s in current scope")
+    }
+  final def isDefinedAt(s : String) : Boolean = getDefiningScope(s) match {
+      case Some(st) => true
+      case None => false
+    }
 }
 object Scope {
-  def apply(kv : (String, Any)*) = new Scope(Map(kv : _*))
-  def apply(prev : Scope, newBindings : (String, Any)*) = {
-    val ret = prev.copy
-    for (binding <- newBindings) ret += binding
-    ret
-  }
+  def apply(kv : (String, Any)*) = new Scope(mMap(kv : _*), null)
+  def apply(prev : Scope, newBindings : (String, Any)*) = new Scope(mMap(newBindings : _*), prev)
+}
+
+abstract class DynFunc extends Dynamic with Function1[List[Any], Any] {
+  def apply(a : List[Any]) = applyDynamic("call")(a(0), a(1))
+  def applyDynamic(call : String)(args : Any*) : Any
 }
 
 // ------------------------------------------------------------------------------------------------------------
 // Reader
 // ------------------------------------------------------------------------------------------------------------
-class Reader extends RegexParsers {
+class Reader extends RegexParsers with PackratParsers{
   // TODO: 
-  //  + character literals
-  //  + macro dispatch
-  //  + quote/quasiquote/unquote
   //  + missing support for string escape sequences
   //  + etc.
   val FloatWithDotMatcher  = """[-+]?[0-9]*\.[0-9]+([eE][-+]?[0-9]+)?[Ff]?""".r
@@ -190,8 +260,8 @@ class Reader extends RegexParsers {
   def d_obrac  = "[" ~> readTable('[')
   def symbol   = """[^\d(){}#'`,@~;~\[\]^\s][^\s()#'`,@~;^{}~\[\]]*""".r ^^ { x => Symbol(x) }
   def sexpr  : Parser[Any] = "(" ~> rep(expr) <~ ")"
-  def expr   : Parser[Any]  = (double | float | int | uchar | achar | char | string | bools | symbol | sexpr | 
-                                 d_hash | d_quote | d_ocurly | d_obrac | d_quasi | d_tilde)
+  def expr   : Parser[Any] = (double | float | int | uchar | achar | char | string | bools | symbol | sexpr | 
+                              d_hash | d_quote | d_ocurly | d_obrac | d_quasi | d_tilde)
 
   def apply(input : String) : Any = parseAll(expr, input) match {
       case Success(result, _) => result
@@ -209,7 +279,7 @@ class Reader extends RegexParsers {
 object REPL {
   def prompt = Console.BLUE + "scalisp> " + Console.YELLOW
   val console = {
-    val consoleReader = new ConsoleReader(System.in, new java.io.OutputStreamWriter(System.out))
+    val consoleReader = new ConsoleReader(System.in, System.out, null, null)
     consoleReader setHistory (new FileHistory(new java.io.File(".scalisp-history")))
     consoleReader setHistoryEnabled true
     consoleReader setPrompt prompt
@@ -217,12 +287,23 @@ object REPL {
   }
   def main(args : Array[String]) {
     val reader = new Reader
-    val scope  = Scope(DefaultEnvironment : _*)
+    val scope  = Scope(lib.DefaultEnvironment : _*)
+    var x = 0
+    scope("clear")  = { (xs : List[Any]) => x = 0; x }
+    scope("incr")   = { (xs : List[Any]) => x += xs(0).asInstanceOf[Int]; x }
+    scope("multi1") = MultiMethod({ case Tuple1(a : Int) => x += a; x })
+    scope("multi3") = MultiMethod({ case Tuple1(a : Int) => x += a; x }, 
+                                     { case Tuple1(a : String) => "test" }, 
+                                     { case Tuple2(a : String, b : Int) => s"$a -> $b" })
 
     while(true) {
       console.readLine() match {
         case l : String =>
-          println(Console.CYAN + lispString(eval(reader(l), scope)))
+          val start = System.nanoTime
+          val res    = lispString(eval(reader(l), scope))
+          val dur   = System.nanoTime - start
+          println(Console.CYAN + res)
+          println(Console.RED  + f"result took ${dur.toDouble / 1e9}%7.2f seconds")
         case _ => 
           println(Console.RED + "exiting...")
           System.exit(0)
@@ -232,122 +313,3 @@ object REPL {
   }
 }
 
-// ------------------------------------------------------------------------------------------------------------
-// Tests
-// ------------------------------------------------------------------------------------------------------------
-object Tests {
-  var total  = 0
-  var errors = 0
-  // Tests
-  implicit class X(a : Any) {
-    def shouldBe(b : Any) = {
-      val exprString = a.toString + " == " + b.toString
-      var shortened  = exprString.substring(0, math.min(exprString.length, 97))
-      if (shortened.length < exprString.length) shortened = shortened + "..."
-      total += 1
-      if (a == b) println(Console.GREEN + f"$shortened%-100s ${"[OK]"}%6s")
-      else { errors += 1; println(Console.RED + f"$shortened%-100s ${"[FAIL]"}%6s") }
-    }
-  }
-  def header(s : String) = {
-    println()
-    println(Console.YELLOW + s)
-    println(Console.YELLOW + ("-" * s.length))
-  }
-  def summary = {
-    val color = if (errors > 0) Console.MAGENTA else Console.CYAN
-    println()
-    val res     = f"Summary: $errors%d tests failed out of $total%d [accuracy: ${(total - errors) * 100.0 / total}%.2f%%]"
-    val colored = Console.WHITE + "Summary: " + color + f"$errors%d tests failed out of $total%d [accuracy: ${(total - errors) * 100.0 / total}%.2f%%]"
-    println(Console.WHITE + ("=" * res.length))
-    println(Console.WHITE + colored)
-    println(Console.WHITE + ("=" * res.length))
-    println(Console.RESET)
-  }
-
-  def main(args : Array[String]) {
-    val reader = new Reader
-    val scope  = Scope(DefaultEnvironment : _*)
-
-    scope += "function" -> { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
-
-    header("Reading simple expressions")
-    reader("function") shouldBe Symbol("function")
-    reader(""""function"""") shouldBe "function"
-    reader("1") shouldBe 1
-    reader("2.2") shouldBe 2.2f
-    reader("2f") shouldBe 2.0f
-    reader("3.3d") shouldBe 3.3
-    reader("3d") shouldBe 3.0
-    reader("1 ; this is a test") shouldBe 1
-    reader("""|; this is a test
-              |  3.3f""".stripMargin) shouldBe 3.3f
-    reader("true") shouldBe true
-    reader("false") shouldBe false
-    reader("\\u236a") shouldBe '\u236a'
-    reader("\\62") shouldBe 'b'
-    reader("\\X") shouldBe 'X'
-
-    header("Reading s-expressions")
-    reader("(2)") shouldBe List(2)
-    reader("(2.2)") shouldBe List(2.2f)
-    reader("(2.2 3)") shouldBe List(2.2f, 3)
-    reader("(2.2 3 function)") shouldBe List(2.2f, 3, Symbol("function"))
-    reader("(function 2.2)") shouldBe List(Symbol("function"), 2.2f)
-    reader("(lambda (x) (+ x 1))") shouldBe List(Symbol("lambda"), List(Symbol("x")), List(Symbol("+"), Symbol("x"), 1))
-
-    header("Reading with reader macros")
-    reader("#{a b c}") shouldBe Set('a, 'b, 'c)
-    reader("'(a b c)") shouldBe List('quote, List('a, 'b, 'c))
-    reader("{a b c d}") shouldBe Map('a -> 'b, 'c -> 'd)
-    reader("[a b c d]") shouldBe Vector('a, 'b, 'c, 'd)
-    reader("[a #{ b b } (c c) [d d]]") shouldBe Vector('a, Set('b), List('c, 'c), Vector('d, 'd))
-    reader("#{{a a b b} [b b] #{c d}}") shouldBe Set(Map('a -> 'a, 'b -> 'b), Vector('b, 'b), Set('c, 'd))
-    reader("`(test ~x ~@y)") shouldBe List('quasiquote, List('test, List('splice, 'x), List('spliceseq, 'y)))
-
-    header("Special forms")
-    eval(reader("(if true 1 2)"), scope) shouldBe 1
-    eval(reader("(if false 1 2)"), scope) shouldBe 2
-    eval(reader("(if (if true false true) 1 2)"), scope) shouldBe 2
-    eval(reader("(if (if false false true) 1 2)"), scope) shouldBe 1
-    eval(reader("(def incr (lambda (x) (+ x 1)))"), scope).toString shouldBe "<function1>"
-    eval(reader("(incr 1)"), scope) shouldBe 2
-    eval(reader("(incr 4)"), scope) shouldBe 5
-    eval(reader("(set! y 4)"), scope) shouldBe 4
-    eval(reader("(def add-y (lambda (x) (+ x y)))"), scope).toString shouldBe "<function1>"
-    eval(reader("(add-y 4)"), scope) shouldBe 8
-    eval(reader("(add-y 1)"), scope) shouldBe 5
-
-    header("Read and evaluate")
-    eval(reader("(function 2.2 3.3 (function 1.0 2.0))"), scope) shouldBe 8.5f
-    eval(reader("((lambda (x) (+ x 1)) 1)"), scope) shouldBe 2
-    eval(reader("`(test ~y ~y)"), scope) shouldBe List('test, 4, 4)
-    eval(reader("(set! z '(3 2 1))"), scope) shouldBe List(3, 2, 1)
-    eval(reader("{ y y }"), scope) shouldBe Map(4 -> 4)
-    eval(reader("{ y y 1 z }"), scope) shouldBe Map(4 -> 4, 1 -> List(3, 2, 1))
-    eval(reader("[ y y { 1 z } ]"), scope) shouldBe Vector(4, 4, Map(1 -> List(3, 2, 1)))
-    eval(reader("#{(incr 10) y}"), scope) shouldBe Set(11, 4)
-
-
-    header("Macros and quoting")
-    eval(reader("(quote (1 2 3))"), scope) shouldBe List(1, 2, 3)
-    eval(reader("(quote (+ 1 4))"), scope) shouldBe List('+, 1, 4)
-    eval(reader("(macro test (x) (cons (quote -) (rest x)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(test (+ 1 4))"), scope) shouldBe -3
-    eval(reader("(macro m (x) (print \"-- Evaluating: \" x) x)"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(m (+ 1 3))"), scope) shouldBe 4
-    eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(define addxy (x y) (+ x y))"), scope).toString shouldBe "<function1>"
-    eval(reader("(addxy 1 3)"), scope) shouldBe 4
-    eval(reader("(macro def2 (name args body) `(def ~name (lambda ~args ~body)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(def2 addxy2 (x y) (+ x y))"), scope).toString shouldBe "<function1>"
-    eval(reader("(addxy2 1 3)"), scope) shouldBe 4
-    eval(reader("`(test ~y ~@z)"), scope) shouldBe List('test, 4, 3, 2, 1)
-    eval(reader("`{ ~y ~y }"), scope) shouldBe Map(4 -> 4)
-    eval(reader("((lambda (y) `(print `(+ ~~y ~@z))) 7)"), scope) shouldBe List('print, List('quasiquote, List('+, 7, List('spliceseq, 'z))))
-    eval(reader("(macro twolevel (x) `(macro secondlevel (y) `(- ~~x ~y)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(twolevel 10)"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(secondlevel 5)"), scope) shouldBe 5
-    summary
-  }
-}
