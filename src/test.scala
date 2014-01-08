@@ -76,7 +76,7 @@ object Tests {
     val reader = new Reader
     val scope  = Scope(lib.DefaultEnvironment : _*)
 
-    scope("function") = { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
+    scope('function) = { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
 
     header("Reading simple expressions")
     reader("function") shouldBe Symbol("function")
@@ -160,7 +160,7 @@ object Tests {
     eval(reader("(secondlevel 5)"), scope) shouldBe 5
 
     header("Multimethods and dispatch")
-    scope("mult-method") = MultiMethod({ case Tuple1(a : Int) => 666 }, { case Tuple1(a : String) => "test" }, { case Tuple2(a : String, b : Int) => s"$a -> $b" })
+    scope(Symbol("mult-method")) = MultiMethod({ case Tuple1(a : Int) => 666 }, { case Tuple1(a : String) => "test" }, { case Tuple2(a : String, b : Int) => s"$a -> $b" })
     eval(reader("(mult-method 1)"), scope) shouldBe 666
     eval(reader("(mult-method \"1\")"), scope) shouldBe "test"
     eval(reader("(mult-method \"test\" 2)"), scope) shouldBe "test -> 2"

@@ -37,36 +37,36 @@ object `package` {
       case ex @ _ => ex
     }
   def eval(expr : Any, scope : Scope) : Any = expr match {
-      case Symbol(name) => scope(name)
+      case name : Symbol => scope(name)
       case args : List[Any] =>
         args match {
           // Special forms
           case Symbol("lambda") :: (fargs : List[Any]) :: body =>
+            if (body.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
             val symargs = fargs.map { x => assert(x.isInstanceOf[Symbol], s"lambda argument $x is not a string!"); x.asInstanceOf[Symbol] }
 
             { (xs : List[Any]) =>
-              val newScope = Scope(scope, newBindings = (symargs.map(_.name) zip xs) : _*)
+              val newScope = Scope(scope, newBindings = (symargs zip xs) : _*)
               var res : Any = 0
               for (l <- body) res = eval(l, newScope)
-              //eval(body.last, newScope)
               res
             }
           case Symbol("lambda") :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
           case Symbol("quote") :: rest :: Nil => rest
           case Symbol("quasiquote") :: rest :: Nil => splice(rest, scope)
           case sp @ ((Symbol("splice") | Symbol("spliceseq")) :: x :: Nil) => sp // don't deeply eval beyond this point
-          case (Symbol("set!") | Symbol("def")) :: Symbol(name) :: value :: Nil =>
+          case (Symbol("set!") | Symbol("def")) :: (name : Symbol) :: value :: Nil =>
             val res = eval(value, scope)
             scope(name) = res
             res
-          case Symbol("macro") :: Symbol(name) :: (margs : List[Any]) :: body =>
+          case Symbol("macro") :: (name : Symbol) :: (margs : List[Any]) :: body =>
             val symargs = margs.map { x => assert(x.isInstanceOf[Symbol], s"macro argument $x is not a string!"); x.asInstanceOf[Symbol] }
 
             val mac = Macro({ (xs : List[Any]) =>
-                              val newScope = Scope(scope, newBindings = (symargs.map(_.name) zip xs) : _*)
-                              for (l <- body.dropRight(1)) eval(l, newScope)
-                              val x = eval(body.last, newScope)
-                              x
+                              val newScope = Scope(scope, newBindings = (symargs zip xs) : _*)
+                              var res : Any = 0
+                              for (l <- body) res = eval(l, newScope)
+                              res
                             })
             scope(name) = mac
             mac
@@ -81,11 +81,9 @@ object `package` {
                 eval(expr, scope)
               case func : Function1[_, _] =>
                 val evalArgs = rest.map(e => eval(e, scope))
-                func.asInstanceOf[Function1[List[Any], Any]](evalArgs) //args.tail)
+                func.asInstanceOf[Function1[List[Any], Any]](evalArgs)
               case x @ _ => throw Error(s"$x [a literal value] cannot be used as a function")
             }
-            //else throw Error(s"Function ${fn} not defined")
-          
         }
       case map : Map[_, _] => map.map { case (k, v) => eval(k, scope) -> eval(v, scope) }
       case iter : Iterable[Any] => iter.map(v => eval(v, scope))
@@ -144,32 +142,27 @@ object MultiMethod {
 // ------------------------------------------------------------------------------------------------------------
 // Scope
 // ------------------------------------------------------------------------------------------------------------
-class Scope(var symtab : mMap[String, Any] = mMap[String, Any](), root : Scope) {
-  @tailrec final def getDefiningScope(k : String) : Option[mMap[String, Any]] =
+class Scope(var symtab : mMap[Symbol, Any] = mMap[Symbol, Any](), root : Scope) {
+  @tailrec final def getDefiningScope(k : Symbol) : Option[mMap[Symbol, Any]] =
     if (symtab.isDefinedAt(k)) Some(symtab)
     else if (root != null) root.getDefiningScope(k)
     else None
-  final def update(k : String, v : Any) = getDefiningScope(k) match {
+  final def update(k : Symbol, v : Any) = getDefiningScope(k) match {
       case Some(st) => st(k) = v
       case None => symtab(k) = v
     }
-  final def apply(s : String) : Any = getDefiningScope(s) match {
+  final def apply(s : Symbol) : Any = getDefiningScope(s) match {
       case Some(st) => st(s)
       case None => BindingNotFound(s"Can't find binding for $s in current scope")
     }
-  final def isDefinedAt(s : String) : Boolean = getDefiningScope(s) match {
+  final def isDefinedAt(s : Symbol) : Boolean = getDefiningScope(s) match {
       case Some(st) => true
       case None => false
     }
 }
 object Scope {
-  def apply(kv : (String, Any)*) = new Scope(mMap(kv : _*), null)
-  def apply(prev : Scope, newBindings : (String, Any)*) = new Scope(mMap(newBindings : _*), prev)
-}
-
-abstract class DynFunc extends Dynamic with Function1[List[Any], Any] {
-  def apply(a : List[Any]) = applyDynamic("call")(a(0), a(1))
-  def applyDynamic(call : String)(args : Any*) : Any
+  def apply(kv : (Symbol, Any)*) = new Scope(mMap(kv : _*), null)
+  def apply(prev : Scope, newBindings : (Symbol, Any)*) = new Scope(mMap(newBindings : _*), prev)
 }
 
 // ------------------------------------------------------------------------------------------------------------
