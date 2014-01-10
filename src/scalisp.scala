@@ -118,6 +118,22 @@ case class ArgumentError(e : String) extends Exception(e)
 case class NotImplementedError(e : String) extends Exception(e)
 case class BindingNotFound(e : String) extends Exception(e)
 
+// ------------------------------------------------------------------------------------------------------------
+// Scope
+// ------------------------------------------------------------------------------------------------------------
+class Scope(var symtab : Map[Symbol, Any] = Map[Symbol, Any]()) {
+  final def update(k : Symbol, v : Any) { symtab += k -> v }
+  final def apply(k : Symbol) : Any = symtab(k)
+  final def isDefinedAt(k : Symbol) = symtab isDefinedAt k
+}
+object Scope {
+  def apply(kv : (Symbol, Any)*) = new Scope(Map(kv : _*))
+  def apply(prev : Scope, newBindings : (Symbol, Any)*) = new Scope(prev.symtab ++ newBindings)
+}
+
+// ------------------------------------------------------------------------------------------------------------
+// Functions/macros
+// ------------------------------------------------------------------------------------------------------------
 case class Macro(fn : List[Any] => Any)
 
 class MultiMethod(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBuffer[PartialFunction[Product, Any]]()) extends Function1[List[Any], Any] {  
@@ -141,32 +157,6 @@ class MultiMethod(methods : ArrayBuffer[PartialFunction[Product, Any]] = ArrayBu
 }
 object MultiMethod {
   def apply(methods : PartialFunction[Product, Any]*) = new MultiMethod(ArrayBuffer(methods : _*))
-}
-
-// ------------------------------------------------------------------------------------------------------------
-// Scope
-// ------------------------------------------------------------------------------------------------------------
-class Scope(var symtab : mMap[Symbol, Any] = mMap[Symbol, Any](), root : Scope) {
-  @tailrec final def getDefiningScope(k : Symbol) : Option[mMap[Symbol, Any]] =
-    if (symtab.isDefinedAt(k)) Some(symtab)
-    else if (root != null) root.getDefiningScope(k)
-    else None
-  final def update(k : Symbol, v : Any) = getDefiningScope(k) match {
-      case Some(st) => st(k) = v
-      case None => symtab(k) = v
-    }
-  final def apply(s : Symbol) : Any = getDefiningScope(s) match {
-      case Some(st) => st(s)
-      case None => BindingNotFound(s"Can't find binding for $s in current scope")
-    }
-  final def isDefinedAt(s : Symbol) : Boolean = getDefiningScope(s) match {
-      case Some(st) => true
-      case None => false
-    }
-}
-object Scope {
-  def apply(kv : (Symbol, Any)*) = new Scope(mMap(kv : _*), null)
-  def apply(prev : Scope, newBindings : (Symbol, Any)*) = new Scope(mMap(newBindings : _*), prev)
 }
 
 // ------------------------------------------------------------------------------------------------------------
