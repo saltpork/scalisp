@@ -64,15 +64,6 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
      }
    }
 
-   performance of "Partial function function dispatch" in {
-     using(iters) in { iterations =>
-       val ast = reader("(set! x (c+ x 1))")
-       eval(reader("(set! x 0)"), scope)
-
-       for (i <- 0 until iterations) eval(ast, scope)
-     }
-   }
-
    performance of "Multiple dispatch" in {
      using(iters) in { iterations =>
        val ast = reader("(set! x (+ x 1))")
@@ -104,6 +95,16 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
      println("FIBO: " + eval(ast, scope))
      val dur = System.nanoTime - start
      println(s"FIBO: ${dur / 1e9}")
+     using(ranges) in { iteration => eval(ast, scope) }
+   }
+   performance of "Fibo (int speciialized)" in {
+     eval(reader("(set! fibo2 (lambda (x) (if (<<int> x 2) 1 (+<int> (fibo2 (-<int> x 1)) (fibo2 (-<int> x 2))))))"), scope)
+     val start = System.nanoTime
+     val ast = reader("(fibo2 40)")
+
+     println("FIBO [INT]: " + eval(ast, scope))
+     val dur = System.nanoTime - start
+     println(s"FIBO [INT]: ${dur / 1e9}")
      using(ranges) in { iteration => eval(ast, scope) }
    }
 }

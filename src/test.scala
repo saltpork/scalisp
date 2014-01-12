@@ -76,7 +76,7 @@ object Tests {
     val reader = new Reader
     val scope  = Scope(lib.DefaultEnvironment : _*)
 
-    scope('function) = { (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
+    scope('function) = Fn({ (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) })
 
     header("Reading simple expressions")
     reader("function") shouldBe Symbol("function")
@@ -117,11 +117,11 @@ object Tests {
     eval(reader("(if false 1 2)"), scope) shouldBe 2
     eval(reader("(if (if true false true) 1 2)"), scope) shouldBe 2
     eval(reader("(if (if false false true) 1 2)"), scope) shouldBe 1
-    eval(reader("(def incr (lambda (x) (+ x 1)))"), scope).toString shouldBe "<function1>"
+    eval(reader("(def incr (lambda (x) (+ x 1)))"), scope)
     eval(reader("(incr 1)"), scope) shouldBe 2
     eval(reader("(incr 4)"), scope) shouldBe 5
     eval(reader("(set! y 4)"), scope) shouldBe 4
-    eval(reader("(def add-y (lambda (x) (+ x y)))"), scope).toString shouldBe "<function1>"
+    eval(reader("(def add-y (lambda (x) (+ x y)))"), scope)
     eval(reader("(add-y 4)"), scope) shouldBe 8
     eval(reader("(add-y 1)"), scope) shouldBe 5
 
@@ -147,10 +147,10 @@ object Tests {
     eval(reader("(macro m (x) (print \"-- Evaluating: \" x) x)"), scope).toString shouldBe "Macro(<function1>)"
     eval(reader("(m (+ 1 3))"), scope) shouldBe 4
     eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(define addxy (x y) (+ x y))"), scope).toString shouldBe "<function1>"
+    eval(reader("(define addxy (x y) (+ x y))"), scope)
     eval(reader("(addxy 1 3)"), scope) shouldBe 4
     eval(reader("(macro def2 (name args body) `(def ~name (lambda ~args ~body)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(def2 addxy2 (x y) (+ x y))"), scope).toString shouldBe "<function1>"
+    eval(reader("(def2 addxy2 (x y) (+ x y))"), scope)
     eval(reader("(addxy2 1 3)"), scope) shouldBe 4
     eval(reader("`(test ~y ~@z)"), scope) shouldBe List('test, 4, 3, 2, 1)
     eval(reader("`{ ~y ~y }"), scope) shouldBe Map(4 -> 4)
@@ -160,11 +160,13 @@ object Tests {
     eval(reader("(secondlevel 5)"), scope) shouldBe 5
 
     header("Multimethods and dispatch")
-    scope(Symbol("mult-method")) = MultiMethod({ case Tuple1(a : Int) => 666 }, { case Tuple1(a : String) => "test" }, { case Tuple2(a : String, b : Int) => s"$a -> $b" })
+    scope(Symbol("mult-method")) = MM(Map(sig(IntType)             -> F1({ (a : Int) => 666 }),
+                                          sig(StringType)          -> F1({ (a : String) => "test" }),
+                                          sig(StringType, IntType) -> F2({ (a : String, b : Int) => s"$a -> $b" })))
     eval(reader("(mult-method 1)"), scope) shouldBe 666
     eval(reader("(mult-method \"1\")"), scope) shouldBe "test"
     eval(reader("(mult-method \"test\" 2)"), scope) shouldBe "test -> 2"
-    eval(reader("(mult-method 'test)"), scope) shouldThrow ArgumentError("No method matches ('test)")
+    eval(reader("(mult-method 'test)"), scope) shouldThrow ArgumentError("No method matches prototype: (<native> symbol)")
     eval(reader("(string 'test)"), scope) shouldBe "test"
     eval(reader("(string 1)"), scope) shouldBe "1"
     eval(reader("(string 2.0)"), scope) shouldBe "2.0"
@@ -174,6 +176,11 @@ object Tests {
     eval(reader("(trim \"  b  \")"), scope) shouldBe "b"
     eval(reader("(substring \"  b  \" 2 3)"), scope) shouldBe "b"
     eval(reader("(loop 10 (lambda (x) (print 1 x)))"), scope).toString shouldBe "()"
+    eval(reader("(defmethod lisp-mm (a int b int) (+ a b))"), scope)
+    eval(reader("(defmethod lisp-mm (a string b string) (string-concat a b))"), scope)
+    eval(reader("(lisp-mm 2 1)"), scope) shouldBe 3
+    eval(reader("(lisp-mm \"Test\" \"1\")"), scope) shouldBe "Test1"
+    eval(reader("(lisp-mm \"Test\" \"1\" 33)"), scope) shouldThrow ArgumentError("No method matches prototype: (lisp-mm string string int)")
 
     summary
   }
