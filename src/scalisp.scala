@@ -253,6 +253,8 @@ case class TypeError(e : String) extends Exception(e)
 // ------------------------------------------------------------------------------------------------------------
 // Scope
 // ------------------------------------------------------------------------------------------------------------
+case class Ref(i : Int, s : Symbol)
+
 case class SymbolCache(var nameSet : Map[Symbol, Int] = Map[Symbol, Int](), var index : ArrayBuffer[Symbol] = ArrayBuffer[Symbol]()) {
   def insertName(name : Symbol) =
     if (nameSet isDefinedAt name) nameSet(name)
@@ -308,21 +310,22 @@ object Scope {
 // ------------------------------------------------------------------------------------------------------------
 case class Macro(fn : List[Any] => Any)
 
-case class Ref(i : Int, s : Symbol)
 abstract class LFunc(var scope : Scope, val args : Array[Ref]) { // Lisp Functions
-  def f0 : Any
-  def apply(outerScope : Scope, rest : List[Any]) = {
+  @inline def f0 : Any
+  @inline def apply(outerScope : Scope, rest : List[Any]) = {
     scope = Scope(scope)
     var idx = 0
-    for (r <- rest) {
-      scope(args(idx).i) = eval(r, outerScope)
+    var t = rest
+    while(t != Nil) {
+      scope(args(idx).i) = eval(t.head, outerScope)
       idx += 1
+      t = t.tail
     }
     f0
   }
 }
 case class LMM(val name : Symbol, var methods : Map[Long, LFunc]) { // Lisp multimethods
-  def apply(outerScope : Scope, args : List[Any]) = {
+  @inline def apply(outerScope : Scope, args : List[Any]) = {
     val evaled         = args.map(r => eval(r, outerScope)).toArray
     val types          = evaled.map(r => typeOf(r))
     val mi             = sig(types : _*)
