@@ -161,9 +161,9 @@ object Tests {
     eval(reader("(secondlevel 5)", scope.symbolCache), scope) shouldBe 5
 
     header("Multimethods and dispatch")
-    scope(Symbol("mult-method")) = MM(Map(sig(IntType)             -> F1({ (a : Int) => 666 }),
-                                          sig(StringType)          -> F1({ (a : String) => "test" }),
-                                          sig(StringType, IntType) -> F2({ (a : String, b : Int) => s"$a -> $b" })))
+    scope(Symbol("mult-method")) = MM(List(Array(IntType)             -> F1({ (a : Int) => 666 }),
+                                          Array(StringType)          -> F1({ (a : String) => "test" }),
+                                          Array(StringType, IntType) -> F2({ (a : String, b : Int) => s"$a -> $b" })))
     eval(reader("(mult-method 1)", scope.symbolCache), scope) shouldBe 666
     eval(reader("(mult-method \"1\")", scope.symbolCache), scope) shouldBe "test"
     eval(reader("(mult-method \"test\" 2)", scope.symbolCache), scope) shouldBe "test -> 2"

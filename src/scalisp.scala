@@ -380,28 +380,24 @@ class TypeTrie(methods : List[(Array[Byte], AnyRef)]) {
   }
 }
 
-case class MM(methods : Map[Long, AnyRef] = Map()) { //methodList : List[(Array[Byte], AnyRef)]) {
-  //val methods = new TypeTrie(methodList)
+case class MM(methodList : List[(Array[Byte], AnyRef)]) {
+  val methods = new TypeTrie(methodList)
   def apply() = {
-    val fn = methods.getOrElse(ZeroArity, throw ArgumentError(s"No method matches prototype: (<native>)"))
-    //val fn = methods.getOrElse(Array[Byte](), throw ArgumentError(s"No method matches prototype: (<native>)"))
+    val fn = methods.getOrElse(Array[Byte](), throw ArgumentError(s"No method matches prototype: (<native>)"))
     fn.asInstanceOf[F0[Any]]()
   }
   def apply(a : Any) = {
-    val sig : Long = typeOf(a)
-    //val sig = Array(typeOf(a))
+    val sig = Array(typeOf(a))
     val fn = methods.getOrElse(sig, throw ArgumentError(s"No method matches prototype: (<native> ${typeName(typeOf(a))})"))
     fn.asInstanceOf[F1[Any, Any]](a)
   }
   def apply(a : Any, b : Any) = {
-    val sig : Long = (typeOf(a) << 4) | typeOf(b)
-    //val sig = Array(typeOf(a), typeOf(b))
+    val sig = Array(typeOf(a), typeOf(b))
     val fn = methods.getOrElse(sig, throw ArgumentError(s"No method matches prototype: (<native> ${typeName(typeOf(a))} ${typeName(typeOf(b))})"))
     fn.asInstanceOf[F2[Any, Any, Any]](a, b)
   }
   def apply(a : Any, b : Any, c : Any) = {
-    val sig : Long = (typeOf(a) << 8) | (typeOf(b) << 4) | typeOf(c)
-    //val sig = Array(typeOf(a), typeOf(b), typeOf(c))
+    val sig = Array(typeOf(a), typeOf(b), typeOf(c))
     val fn = methods.getOrElse(sig, throw ArgumentError(s"No method matches (<native> ${typeName(typeOf(a))} ${typeName(typeOf(b))} ${typeName(typeOf(c))})"))
     fn.asInstanceOf[F3[Any, Any, Any, Any]](a, b, c)
   }
