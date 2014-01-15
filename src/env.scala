@@ -87,7 +87,7 @@ object `package` {
       Symbol("loop")        -> F2({ (n : Int, body : LFunc) =>
                                     body.scope = Scope(body.scope)
                                     for (i <- 0 until n) {
-                                      body.scope(body.args(0)) = i
+                                      body.scope(body.args(0).i) = i
                                       body.f0
                                     }
                                   }),
@@ -106,8 +106,9 @@ object `package` {
       Symbol("print")       -> Fn({ (xs : List[Any]) => println(Console.YELLOW + xs.foldLeft("")(_ + _)) }),
 
       // Strings and symbols
-      Symbol("string")      -> MM(Map(sig(SymbolType)  -> F1({ (a : Symbol)  => a.name })) ++
-                                    (for (t <- 0x0 to 0xb if t != SymbolType) yield t.toLong -> F1({ (a : Any) => lispString(a) }))),
+      //Symbol("string")      -> MM(Map(sig(SymbolType)  -> F1({ (a : Symbol) a.name })) ++
+      Symbol("string")      -> MM(Map(sig(SymbolType)  -> F1({ (a : Any)  => a match { case Ref(i, s) => s.name; case a : Symbol => a.name } })) ++
+                                    (for (t <- 0x0 to 0xb if t != SymbolType) yield sig(t.toByte) -> F1({ (a : Any) => lispString(a) }))),
       Symbol("symbol")      -> F1({ (a : String) => Symbol(a) }),
       Symbol("trim")        -> F1({ (a : String) => a.trim }),
       Symbol("length")      -> F1({ (a : String) => a.length }),
