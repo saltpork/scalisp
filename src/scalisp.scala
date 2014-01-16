@@ -122,19 +122,22 @@ object `package` {
                      })
       case ex @ _ => ex
     }
-  def eval(expr : Any, scope : Scope) : Any = expr match {
+  def eval(expr : Any, scope : Scope, self : Ref = null) : Any = expr match {
       case Ref(i, name) => scope(i)
-      case name : Symbol => throw new ArgumentError(s"trying to evaluate a unreferenced symbol: $name")//scope(name)
+      case name : Symbol => throw new ArgumentError(s"trying to evaluate a unreferenced symbol: $name")
       case args : List[Any] =>
         args match {
           // Special forms
           case `Lambda` :: (fargs : List[Any]) :: body =>
             val barr = body.toArray
             if (barr.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
-            //val symargs  = fargs.map { x => assert(x.isInstanceOf[Symbol], s"lambda argument $x is not a string!"); x.asInstanceOf[Symbol] }.toArray
-            val symargs  = fargs.map { x => assert(x.isInstanceOf[Ref], s"lambda argument $x is not a string!"); x.asInstanceOf[Ref] }.toArray
+            val symargs = fargs.map { x => assert(x.isInstanceOf[Ref], s"lambda argument $x is not a string!"); x.asInstanceOf[Ref] }.toArray
 
-            new LFunc(scope = scope, args = symargs) {
+            new LFunc(scope = Scope(scope), args = symargs) {
+              val newBindings = if (self != null) args.map(_ -> null) ++ Array(self -> this) 
+                                else args.map(_ -> null)
+              for ((ref, v) <- newBindings) scope(ref.s) = v
+
               def f0 = {
                 var idx = 0
                 while(idx < (barr.length-1)) {
@@ -145,7 +148,7 @@ object `package` {
               }
             }
           //case `DefMethod` :: (name : Symbol) :: (args : List[Any]) :: body =>
-          case `DefMethod` :: Ref(nindex, name) :: (args : List[Any]) :: body =>
+          case `DefMethod` :: (slf @ Ref(nindex, name)) :: (args : List[Any]) :: body =>
             val barr = body.toArray
             if (barr.length == 0) throw Error(s"malformed method with no body: (defmethod $name $args $body)")
             //val symargs  = args.map { x => assert(x.isInstanceOf[Symbol], s"method argument $x is not a string!"); x.asInstanceOf[Symbol] }.toArray
@@ -160,26 +163,29 @@ object `package` {
                 case x @ _ => throw ArgumentError(s"method argument/type pair [$x] is not a wellformed!") 
               }.toArray
             val types    = symtypes.map(x => nameType(x._2))
+            if (!scope.isDefinedAt(name)) scope(name) = LMM(name = name, methods = Map[Long, LFunc]())
             val func = new LFunc(scope = scope, args = symtypes.map(_._1)) {
+                val newBindings : Array[(Ref, Any)]= args.map(_ -> null) ++ Array[(Ref, Any)](slf -> scope(name))
+                for ((ref, v) <- newBindings) scope(ref.s) = v
+
                 def f0 = {
                   var idx = 0
                   while(idx < (barr.length-1)) {
-                    eval(barr(idx), scope)
+                    eval(barr(idx), this.scope)
                     idx += 1
                   }
-                  eval(barr(barr.length - 1), scope)
+                  eval(barr(barr.length - 1), this.scope)
                 }
               }
-            if (!scope.isDefinedAt(name)) scope(name) = LMM(name = name, methods = Map[Long, LFunc]())
             scope(name).asInstanceOf[LMM].methods += sig(types : _*) -> func
           case `Lambda` :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
           case `Quote` :: rest :: Nil => rest
           case `Quasiquote` :: rest :: Nil => splice(rest, scope)
           case sp @ ((`Splice` | `SpliceSeq`) :: x :: Nil) => sp
           //case (`SetBang` | `Def`) :: (name : Symbol) :: value :: Nil =>
-          case (`SetBang` | `Def`) :: Ref(nindex, name) :: value :: Nil =>
+          case (`SetBang` | `Def`) :: (slf @ Ref(nindex, name)) :: value :: Nil =>
             if (!scope.isDefinedAt(name)) scope(name) = null // NOTE: create scope binding for recursion
-            val res = eval(value, scope)
+            val res = eval(value, scope, self = slf)
             scope(name) = res
             res
           //case `MacroSym` :: (name : Symbol) :: (margs : List[Any]) :: body =>

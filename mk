@@ -11,6 +11,8 @@ if [[ "$1" == "repl" ]]; then
     scala -cp scalisp.jar scalisp.REPL
 elif  [[ "$1" == "clean" ]]; then
     rm -rf build build-bench scalisp.jar scalisp-bench.jar
+elif  [[ "$1" == "profile" ]]; then
+    scala -cp $CP:scalisp.jar:scalisp-bench.jar scabench.Profile
 else
     mkdir -p build
     # build
