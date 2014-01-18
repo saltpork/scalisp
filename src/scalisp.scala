@@ -11,17 +11,17 @@ import annotation.tailrec
 object `package` {
   def mapFromList(list : List[Any]) = Map(list.grouped(2).map { case List(a, b) => a -> b }.toList : _*)
 
-  final val Lambda     = Symbol("lambda")
-  final val Quote      = Symbol("quote")
-  final val Quasiquote = Symbol("quasiquote")
-  final val Splice     = Symbol("splice")
-  final val SpliceSeq  = Symbol("spliceseq")
-  final val SetBang    = Symbol("set!")
-  final val Def        = Symbol("def")
-  final val MacroSym   = Symbol("macro")
-  final val If         = Symbol("if")
-  final val DefMethod  = Symbol("defmethod")
-  final val Paste      = Symbol("paste")
+  final val Lambda     = Sym("lambda")
+  final val Quote      = Sym("quote")
+  final val Quasiquote = Sym("quasiquote")
+  final val Splice     = Sym("splice")
+  final val SpliceSeq  = Sym("spliceseq")
+  final val SetBang    = Sym("set!")
+  final val Def        = Sym("def")
+  final val MacroSym   = Sym("macro")
+  final val If         = Sym("if")
+  final val DefMethod  = Sym("defmethod")
+  final val Paste      = Sym("paste")
 
   final val SymbolType : Byte   = 0x1 // Non-numbers
   final val StringType : Byte   = 0x2
@@ -53,20 +53,20 @@ object `package` {
                                          SType        -> "<list>",
                                          AnyType      -> "<any>"
                                          )
-  final val nameType = Map[Symbol, Byte](Symbol("<short>")    -> ShortType,
-                                         Symbol("<int>")      -> IntType,
-                                         Symbol("<float>")    -> FloatType,
-                                         Symbol("<double>")   -> DoubleType,
-                                         Symbol("<symbol>")   -> SymbolType,
-                                         Symbol("<string>")   -> StringType,
-                                         Symbol("<char>")     -> CharType,
-                                         Symbol("<function>") -> FunctionType,
-                                         Symbol("<set>")      -> SetType,
-                                         Symbol("<vector>")   -> VectorType,
-                                         Symbol("<map>")      -> MapType,
-                                         Symbol("<list>")     -> SType,
-                                         Symbol("<any>")      -> AnyType
-                                         )
+  final val nameType = Map[Sym, Byte](Sym("<short>")    -> ShortType,
+                                      Sym("<int>")      -> IntType,
+                                      Sym("<float>")    -> FloatType,
+                                      Sym("<double>")   -> DoubleType,
+                                      Sym("<symbol>")   -> SymbolType,
+                                      Sym("<string>")   -> StringType,
+                                      Sym("<char>")     -> CharType,
+                                      Sym("<function>") -> FunctionType,
+                                      Sym("<set>")      -> SetType,
+                                      Sym("<vector>")   -> VectorType,
+                                      Sym("<map>")      -> MapType,
+                                      Sym("<list>")     -> SType,
+                                      Sym("<any>")      -> AnyType
+    )
   final val reserved   = Set(Lambda, Quote, Quasiquote, Splice, SpliceSeq, SetBang, Def, MacroSym, If, DefMethod, Paste) ++ nameType.keySet
 
   @inline def isNumber(tpe : Byte) = (tpe == AnyType) || ((tpe & 0xc) == (0 : Byte))
@@ -75,8 +75,7 @@ object `package` {
       case i : Int => IntType
       case i : Float => FloatType
       case i : Double => DoubleType
-      case i : Symbol => SymbolType
-      case i : Ref => SymbolType
+      case i : Sym => SymbolType
       case i : String => StringType
       case i : Char => CharType
       case i : List[_] => SType
@@ -122,108 +121,129 @@ object `package` {
                      })
       case ex @ _ => ex
     }
-  def eval(expr : Any, scope : Scope, self : Ref = null) : Any = expr match {
-      case Ref(i, name) => scope(i)
-      case name : Symbol => throw new ArgumentError(s"trying to evaluate a unreferenced symbol: $name")
-      case args : List[Any] =>
+
+  val dispatch = {
+    val dispatchTable = Map(Lambda.index     -> lambda _,
+                            Quote.index      -> quote _,
+                            Quasiquote.index -> quasiquote _,
+                            Splice.index     -> { (args : List[Any], scope : Scope, self : Sym) => evalSplice(Splice, args, scope) },
+                            SpliceSeq.index  -> { (args : List[Any], scope : Scope, self : Sym) => evalSplice(SpliceSeq, args, scope) },
+                            SetBang.index    -> setdef _,
+                            Def.index        -> setdef _,
+                            MacroSym.index   -> defmacro _,
+                            If.index         -> ifelse _,
+                            DefMethod.index  -> defmethod _
+      )
+    val res = Array.fill[Function3[List[Any], Scope, Sym, Any]](reserved.size)(null)
+    for ((i, v) <- dispatchTable) res(i) = v
+    res
+  }
+
+  def lambda(args : List[Any], scope : Scope, self : Sym = null) = {
+    val fargs = args.head.asInstanceOf[List[Sym]].toArray
+    val body  = args.tail.toArray
+    if (body.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
+
+    new LFunc(scope = Scope(scope), args = fargs) {
+      val newBindings : Array[(Sym, Any)] = if (self != null) args.map(_ -> null) ++ Array(self -> this)
+                                            else args.map(_ -> null)
+      for ((ref, v) <- newBindings) scope(ref) = v
+
+      def f0 = {
+        var idx = 0
+        while(idx < (body.length-1)) {
+          eval(body(idx), this.scope)
+          idx += 1
+        }
+        eval(body(body.length-1), this.scope)
+      }
+    }
+  }
+  def defmethod(definition : List[Any], scope : Scope, self : Sym) = {
+    val slf  = definition.head.asInstanceOf[Sym]
+    val args = definition.tail.head.asInstanceOf[List[Sym]]
+    val body = definition.tail.tail.toArray
+    if (body.length == 0) throw Error(s"malformed method with no body: (defmethod ${slf.name} $args $body)")
+
+    val symtypes = args.grouped(2).toArray
+    val types    = symtypes.map(x => nameType(x.tail.head))
+
+    if (!scope.isDefinedAt(slf)) scope(slf) = LMM(name = slf, methods = Map[Long, LFunc]())
+
+    val func = new LFunc(scope = scope, args = symtypes.map(_.head)) {
+        val newBindings : Array[(Sym, Any)]= args.map(_ -> null) ++ Array[(Sym, Any)](slf -> scope(slf.index))
+        for ((ref, v) <- newBindings) scope(ref) = v
+
+        def f0 = {
+          var idx = 0
+          while(idx < (body.length-1)) {
+            eval(body(idx), this.scope)
+            idx += 1
+          }
+          eval(body(body.length - 1), this.scope)
+        }
+      }
+    scope(slf).asInstanceOf[LMM].methods += sig(types : _*) -> func
+  }
+  def quote(expr : List[Any], scope : Scope, self : Sym) = expr.head
+  def quasiquote(expr : List[Any], scope : Scope, self : Sym) = splice(expr.head, scope)
+  def evalSplice(sym : Sym, expr : List[Any], scope : Scope) = List(sym, expr)
+  def setdef(args : List[Any], scope : Scope, self : Sym) = {
+    val slf = args.head.asInstanceOf[Sym]
+    val value = args.tail.head
+    val res = eval(value, scope, self = slf)
+    scope(slf) = res
+    res
+  }
+  def defmacro(exprs : List[Any], scope : Scope, self : Sym) = {
+    val slf   = exprs.head.asInstanceOf[Sym]
+    val margs = exprs.tail.head.asInstanceOf[List[Sym]] 
+    val body  = exprs.tail.tail
+
+    val mac = Macro({ (xs : List[Any]) =>
+                      val newScope = Scope(scope)
+                      var res : Any = 0
+                      for ((k, v) <- margs zip xs) newScope(k) = v
+                      for (l <- body) res = eval(l, newScope)
+                      res
+                    })
+    scope(slf) = mac
+    mac
+  }
+  def ifelse(exprs : List[Any], scope : Scope, self : Sym) = {
+    if (eval(exprs.head, scope).asInstanceOf[Boolean]) eval(exprs(1), scope)
+    else eval(exprs(2), scope)
+  }
+  def funcall(function : Any, args : List[Any], scope : Scope) = {
+    function match {
+      case Macro(mac) => eval(mac(args), scope)
+      case func : LFunc => func(scope, args)
+      case func : MM =>
         args match {
-          // Special forms
-          case `Lambda` :: (fargs : List[Any]) :: body =>
-            val barr = body.toArray
-            if (barr.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
-            val symargs = fargs.map { x => assert(x.isInstanceOf[Ref], s"lambda argument $x is not a string!"); x.asInstanceOf[Ref] }.toArray
-
-            new LFunc(scope = Scope(scope), args = symargs) {
-              val newBindings = if (self != null) args.map(_ -> null) ++ Array(self -> this) 
-                                else args.map(_ -> null)
-              for ((ref, v) <- newBindings) scope(ref.s) = v
-
-              def f0 = {
-                var idx = 0
-                while(idx < (barr.length-1)) {
-                  eval(barr(idx), this.scope)
-                  idx += 1
-                }
-                eval(barr(barr.length - 1), this.scope)
-              }
-            }
-          //case `DefMethod` :: (name : Symbol) :: (args : List[Any]) :: body =>
-          case `DefMethod` :: (slf @ Ref(nindex, name)) :: (args : List[Any]) :: body =>
-            val barr = body.toArray
-            if (barr.length == 0) throw Error(s"malformed method with no body: (defmethod $name $args $body)")
-            //val symargs  = args.map { x => assert(x.isInstanceOf[Symbol], s"method argument $x is not a string!"); x.asInstanceOf[Symbol] }.toArray
-            // val symargs  = args.map { 
-            //     case r : Ref => r
-            //     case s : Symbol => s
-            //     case x @ _ => throw ArgumentError(s"method argument $x is not a string!")
-            //   }.toArray
-            // val symtypes = symargs.grouped(2).map { case Array(a, b) => a -> b }.toArray
-            val symtypes = args.grouped(2).map { 
-                case List(a : Ref, b : Symbol) => a -> b; 
-                case x @ _ => throw ArgumentError(s"method argument/type pair [$x] is not a wellformed!") 
-              }.toArray
-            val types    = symtypes.map(x => nameType(x._2))
-            if (!scope.isDefinedAt(name)) scope(name) = LMM(name = name, methods = Map[Long, LFunc]())
-            val func = new LFunc(scope = scope, args = symtypes.map(_._1)) {
-                val newBindings : Array[(Ref, Any)]= args.map(_ -> null) ++ Array[(Ref, Any)](slf -> scope(name))
-                for ((ref, v) <- newBindings) scope(ref.s) = v
-
-                def f0 = {
-                  var idx = 0
-                  while(idx < (barr.length-1)) {
-                    eval(barr(idx), this.scope)
-                    idx += 1
-                  }
-                  eval(barr(barr.length - 1), this.scope)
-                }
-              }
-            scope(name).asInstanceOf[LMM].methods += sig(types : _*) -> func
-          case `Lambda` :: rest => throw Error(s"malformed lambda expression (lambda ${rest})")
-          case `Quote` :: rest :: Nil => rest
-          case `Quasiquote` :: rest :: Nil => splice(rest, scope)
-          case sp @ ((`Splice` | `SpliceSeq`) :: x :: Nil) => sp
-          //case (`SetBang` | `Def`) :: (name : Symbol) :: value :: Nil =>
-          case (`SetBang` | `Def`) :: (slf @ Ref(nindex, name)) :: value :: Nil =>
-            if (!scope.isDefinedAt(name)) scope(name) = null // NOTE: create scope binding for recursion
-            val res = eval(value, scope, self = slf)
-            scope(name) = res
-            res
-          //case `MacroSym` :: (name : Symbol) :: (margs : List[Any]) :: body =>
-          case `MacroSym` :: Ref(nindex, name) :: (margs : List[Any]) :: body =>
-            //val symargs = margs.map { x => assert(x.isInstanceOf[Symbol], s"macro argument $x is not a string!"); x.asInstanceOf[Symbol] }
-            val symargs = margs.map { x => assert(x.isInstanceOf[Ref], s"macro argument $x is not a string!"); x.asInstanceOf[Ref].s }
-
-            val mac = Macro({ (xs : List[Any]) =>
-                              val newScope = Scope(scope, newBindings = (symargs zip xs) : _*)
-                              var res : Any = 0
-                              for (l <- body) res = eval(l, newScope)
-                              res
-                            })
-            scope(name) = mac
-            mac
-          case `If` :: condExpr :: alt1 :: alt2 :: Nil =>
-            val cond = eval(condExpr, scope).asInstanceOf[Boolean]
-            if (cond) eval(alt1, scope)
-            else eval(alt2, scope)
-          case fn :: rest => // Function and macro call
-            eval(fn, scope) match {
-              case Macro(mac) => eval(mac(rest), scope)
-              case func : LFunc => func(scope, rest)
-              case func : MM => 
-                rest match {
-                  case List() => func()
-                  case List(a) => func(eval(a, scope))
-                  case List(a, b) => func(eval(a, scope), eval(b, scope))
-                  case List(a, b, c) => func(eval(a, scope), eval(b, scope), eval(c, scope))
-                }
-              case func : Fn[_] => func(rest.map(e => eval(e, scope)))
-              case func : F0[_] => func()
-              case func : F1[_, _] => func(eval(rest.head, scope))
-              case func : F2[_, _, _] => func(eval(rest.head, scope), eval(rest.tail.head, scope))
-              case func : F3[_, _, _, _] => func(eval(rest.head, scope), eval(rest.tail.head, scope), eval(rest.tail.tail.head, scope))
-              case func : LMM => func(scope, rest)
-              case x @ _ => throw Error(s"$x [a literal value] cannot be used as a function")
-            }
+          case Nil => func()
+          case a :: Nil => func(eval(a, scope))
+          case a :: b :: Nil => func(eval(a, scope), eval(b, scope))
+          case a :: b :: c :: Nil => func(eval(a, scope), eval(b, scope), eval(c, scope))
+        }
+      case func : Fn[_] => func(args.map(e => eval(e, scope)))
+      case func : F0[_] => func()
+      case func : F1[_, _] => func(eval(args.head, scope))
+      case func : F2[_, _, _] => func(eval(args.head, scope), eval(args(1), scope)) // func(eval(args.head, scope), eval(args.tail.head, scope))
+      case func : F3[_, _, _, _] => func(eval(args.head, scope), eval(args.tail.head, scope), eval(args.tail.tail.head, scope))
+      case func : LMM => func(scope, args)
+      case x @ _ => throw Error(s"$x [a literal value] cannot be used as a function")
+    }
+  }
+  def eval(expr : Any, scope : Scope, self : Sym = null) : Any = expr match {
+      case name : Sym => scope(name.index)
+      case list : List[Any] =>
+        typeOf(list.head) match {
+          case SymbolType => 
+            val idx = list.head.asInstanceOf[Sym].index
+            if (idx < dispatch.length && dispatch(idx) != null)
+              dispatch(idx)(list.tail, scope, self)
+            else funcall(eval(list.head, scope), list.tail, scope)
+          case _ => funcall(eval(list.head, scope), list.tail, scope)
         }
       case map : Map[_, _] => map.map { case (k, v) => eval(k, scope) -> eval(v, scope) }
       case iter : Iterable[Any] => iter.map(v => eval(v, scope))
@@ -235,8 +255,7 @@ object `package` {
   // ------------------------------------------------------------------------------------------------------------
   def lispString(expr : Any) : String =
     expr match {
-      case Symbol(s)          => s"'$s"
-      case Ref(i, s)          => s"'$s"
+      case Sym(s)             => s"'$s"
       case List(xs @ _*)      => s"(${xs.map(e => lispString(e)).mkString(" ")})"
       case Vector(xs @ _*)    => s"[${xs.map(e => lispString(e)).mkString(" ")}]"
       case xs : Set[_]        => s"#{${xs.map(e => lispString(e)).mkString(" ")}}"
@@ -255,57 +274,29 @@ case class ArgumentError(e : String) extends Exception(e)
 case class NotImplementedError(e : String) extends Exception(e)
 case class BindingNotFound(e : String) extends Exception(e)
 case class TypeError(e : String) extends Exception(e)
+case class SyntaxError(e : String) extends Exception(e)
 
 // ------------------------------------------------------------------------------------------------------------
 // Scope
 // ------------------------------------------------------------------------------------------------------------
-case class Ref(i : Int, s : Symbol)
-
-case class SymbolCache(var nameSet : Map[Symbol, Int] = Map[Symbol, Int](), var index : ArrayBuffer[Symbol] = ArrayBuffer[Symbol]()) {
-  def insertName(name : Symbol) =
-    if (nameSet isDefinedAt name) nameSet(name)
-    else {
-      val idx = nameSet.size
-      nameSet += name -> idx
-      index += name
-      idx
-    }
-  def makeNameArray {
-    index = ArrayBuffer.fill[Symbol](nameSet.size)(Lambda)
-    for ((n, idx) <- nameSet) index(idx) = n
-  }
-  def apply(k : Symbol) = nameSet(k) //{ if (!nameSet.isDefinedAt(k)) update(k); nameSet(k) }
-  def apply(i : Int) = index(i)
-  def length = index.length
-  def update(k : Symbol) {
-    assert(!nameSet.isDefinedAt(k), s"Symbol $k is already defined")
-    nameSet += (k -> index.length)
-    index += k
-  }
-}
-
-class Scope(var symtab : Vector[Any], val symbolCache : SymbolCache) {
-  @inline def update(k : Int, v : Any) { symtab = symtab.updated(k, v) }
-  @inline def update(k : Symbol, v : Any) {
-    val idx = symbolCache.insertName(k)
-    if (idx >= symtab.length) 
+class Scope(var symtab : Array[Any]) {
+  @inline def update(k : Int, v : Any) { symtab(k) = v }
+  @inline def update(k : Sym, v : Any) {
+    val idx = k.index
+    if (idx >= symtab.length)
       symtab = symtab ++ (for (i <- symtab.length until idx) yield null)  ++ Array(v)
-    else symtab = symtab.updated(idx, v)
+    else symtab(idx) = v
   }
   @inline def apply(k : Int) : Any = symtab(k)
-  @inline def apply(k : Symbol) : Any = symtab(symbolCache(k))
+  @inline def apply(k : Sym) : Any = symtab(k.index)
   @inline def isDefinedAt(k : Int) = symtab isDefinedAt k
-  @inline def isDefinedAt(k : Symbol) = symtab isDefinedAt symbolCache(k)
+  @inline def isDefinedAt(k : Sym) = symtab isDefinedAt k.index
 }
 
 object Scope {
-  def apply(prev : Scope, newBindings : (Symbol, Any)*) = { // New bindings of prior symbols
-    val sc = new Scope(prev.symtab, prev.symbolCache)
-    for ((k, v) <- newBindings) sc(k) = v
-    sc
-  }
-  def apply(bindings : (Symbol, Any)*) = { // denovo construction
-    val sc = new Scope(Vector[Any](), new SymbolCache())
+  @inline def apply(prev : Scope) = new Scope(prev.symtab.clone)
+  @inline def apply(bindings : (Sym, Any)*) = {
+    val sc = new Scope(Array[Any]())
     for ((k, v) <- bindings) sc(k) = v
     sc
   }
@@ -316,21 +307,21 @@ object Scope {
 // ------------------------------------------------------------------------------------------------------------
 case class Macro(fn : List[Any] => Any)
 
-abstract class LFunc(var scope : Scope, val args : Array[Ref]) { // Lisp Functions
+abstract class LFunc(var scope : Scope, val args : Array[Sym]) { // Lisp Functions
   @inline def f0 : Any
   @inline def apply(outerScope : Scope, rest : List[Any]) = {
     scope = Scope(scope)
     var idx = 0
     var t = rest
-    while(t != Nil) {
-      scope(args(idx).i) = eval(t.head, outerScope)
+    while (t != Nil) {
+      scope(args(idx).index) = eval(t.head, outerScope)
       idx += 1
       t = t.tail
     }
     f0
   }
 }
-case class LMM(val name : Symbol, var methods : Map[Long, LFunc]) { // Lisp multimethods
+case class LMM(val name : Sym, var methods : Map[Long, LFunc]) { // Lisp multimethods
   @inline def apply(outerScope : Scope, args : List[Any]) = {
     val evaled         = args.map(r => eval(r, outerScope)).toArray
     val types          = evaled.map(r => typeOf(r))
@@ -339,7 +330,7 @@ case class LMM(val name : Symbol, var methods : Map[Long, LFunc]) { // Lisp mult
     resolvedMethod.scope = Scope(resolvedMethod.scope)
     var idx = 0
     for (r <- 0 until args.length) {
-      resolvedMethod.scope(resolvedMethod.args(idx).i) = evaled(idx)
+      resolvedMethod.scope(resolvedMethod.args(idx).index) = evaled(idx)
       idx += 1
     }
     resolvedMethod.f0
@@ -371,7 +362,7 @@ class TypeTrie(methods : List[(Array[Byte], AnyRef)]) {
       }
     }
   }
-  def apply(sig : Array[Byte]) : AnyRef = {
+  @inline def apply(sig : Array[Byte]) : AnyRef = {
     if (sig.length == 0) return trie(0)
     var tier = trie(sig.length).asInstanceOf[Array[AnyRef]]
     var i = 0
@@ -382,7 +373,7 @@ class TypeTrie(methods : List[(Array[Byte], AnyRef)]) {
     }
     return tier(sig(sig.length - 1))
   }
-  def getOrElse(sig : Array[Byte], alt : => AnyRef) = {
+  @inline def getOrElse(sig : Array[Byte], alt : => AnyRef) = {
     val res = apply(sig)
     if (res == null) alt
     else res
@@ -424,8 +415,8 @@ class Reader extends RegexParsers with PackratParsers {
       '#'  -> ("{" ~> rep(expr) <~ "}" ^^ { _.toSet }),
       '{'  -> (rep(expr) <~ "}" ^^ { ex => mapFromList(ex) }),
       '['  -> (rep(expr) <~ "]" ^^ { _.toVector }),
-      '\'' -> (expr ^^ { ex => List('quote, ex) }),
-      '`'  -> (expr ^^ { ex => List('quasiquote, ex) }),
+      '\'' -> (expr ^^ { ex => List(Quote, ex) }),
+      '`'  -> (expr ^^ { ex => List(Quasiquote, ex) }),
       '~'  -> (opt("@") ~ expr ^^ { 
                  case Some("@") ~ ex => List(SpliceSeq, ex)
                  case None ~ ex      => List(Splice, ex) })
@@ -448,23 +439,15 @@ class Reader extends RegexParsers with PackratParsers {
   def d_at     = "@" ~> readTable('@')
   def d_ocurly = "{" ~> readTable('{')
   def d_obrac  = "[" ~> readTable('[')
-  def symbol   = """[^\d(){}#'`,@~;~\[\]^\s][^\s()#'`,@~;^{}~\[\]]*""".r ^^ { x => Symbol(x) }
+  def symbol   = """[^\d(){}#'`,@~;~\[\]^\s][^\s()#'`,@~;^{}~\[\]]*""".r ^^ { x => Sym(x) }
   def sexpr  : Parser[Any] = "(" ~> rep(expr) <~ ")"
   def expr   : Parser[Any] = (double | float | int | uchar | achar | char | string | bools | symbol | sexpr | 
                               d_hash | d_quote | d_ocurly | d_obrac | d_quasi | d_tilde)
 
-  def apply(input : String, symbolCache : SymbolCache) : Any = apply(new java.io.StringReader(input), symbolCache)
-  def apply(input : jReader, symbolCache : SymbolCache) : Any = { 
-    def rewriteExpr(e : Any) : Any = e match {
-        case name : Symbol => 
-          if (reserved(name)) name 
-          else Ref(symbolCache.insertName(name), name)
-        case a : Map[_, _] => a.map { case (k, v) => rewriteExpr(k) -> rewriteExpr(v)  }
-        case a : Iterable[Any] => a.map(ee => rewriteExpr(ee))
-        case x @ _ => x
-      }
+  def apply(input : String) : Any = apply(new java.io.StringReader(input))
+  def apply(input : jReader) : Any = { 
     parse(expr, input) match {
-      case Success(result, _) => rewriteExpr(result)
+      case Success(result, _) => result
       case failure @ _ => throw ParseError(failure.toString)
     }
   }
@@ -491,7 +474,7 @@ object REPL {
       console.readLine() match {
         case l : String =>
           val start = System.nanoTime
-          val res    = lispString(eval(reader(l, scope.symbolCache), scope))
+          val res    = lispString(eval(reader(l), scope))
           val dur   = System.nanoTime - start
           println(Console.CYAN + res)
           println(Console.RED  + f"result took ${dur.toDouble / 1e9}%7.2f seconds")

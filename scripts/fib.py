@@ -8,3 +8,4 @@ def fib(a):
 
 print timeit.timeit('fib(20)', "from __main__ import fib", number = 10) / 10
 print timeit.timeit('fib(30)', "from __main__ import fib", number = 10) / 10
+print timeit.timeit('fib(40)', "from __main__ import fib", number = 3) / 3

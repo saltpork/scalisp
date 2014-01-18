@@ -7,7 +7,7 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
     val start = System.nanoTime
     val res   = a
     val dur   = System.nanoTime - start
-    println(f"${name + ":"}%-30s ${dur / 1e9}%20.6f (result: $res)")
+    println(f"${name + ":"}%-60s ${dur / 1e9}%20.6f (result: $res)")
     dur.toDouble -> res
   }
 
@@ -21,8 +21,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Native lambda dispatch" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+<int> x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+<int> x 1))")
+       eval(reader("(set! x 0)"), scope)
        var x = 0
        val fn = { (x : Int, y : Int) => x + y }
 
@@ -32,8 +32,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Native partial function dispatch" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+<int> x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+<int> x 1))")
+       eval(reader("(set! x 0)"), scope)
        var x = 0
        val fn = { case (x : Int, y : Int) => x + y } : PartialFunction[(Int, Int), Int]
 
@@ -43,8 +43,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Native partial function dispatch + store into map" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+<int> x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+<int> x 1))")
+       eval(reader("(set! x 0)"), scope)
        val map = collection.mutable.Map("x" -> 0)
        val fn = { case (x : Int, y : Int) => x + y } : PartialFunction[(Int, Int), Int]
 
@@ -54,8 +54,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Native list dispatch + store into map" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+<int> x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+<int> x 1))")
+       eval(reader("(set! x 0)"), scope)
        val fn = { (x : List[Any]) => x(0).asInstanceOf[Int] + x(1).asInstanceOf[Int] }
        val map = collection.mutable.Map("x" -> 0, "fn" -> fn)
 
@@ -65,8 +65,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Single dispatch" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+<int> x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+<int> x 1))")
+       eval(reader("(set! x 0)"), scope)
 
        for (i <- 0 until iterations) eval(ast, scope)
      }
@@ -74,31 +74,31 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
 
    performance of "Multiple dispatch" in {
      using(iters) in { iterations =>
-       val ast = reader("(set! x (+ x 1))", scope.symbolCache)
-       eval(reader("(set! x 0)", scope.symbolCache), scope)
+       val ast = reader("(set! x (+ x 1))")
+       eval(reader("(set! x 0)"), scope)
 
        for (i <- 0 until iterations) eval(ast, scope)
      }
    }
 
    performance of "Loop with single dispatch (1e5 iterations)" in {
-     val ast = reader("(loop 100000 (lambda (y) (set! x (+<int> x y))))", scope.symbolCache)
-     eval(reader("(set! x 0)", scope.symbolCache), scope)
+     val ast = reader("(loop 100000 (lambda (y) (set! x (+<int> x y))))")
+     eval(reader("(set! x 0)"), scope)
 
      using(ranges) in { iteration => eval(ast, scope) }
    }
 
    performance of "Loop with multiple dispatch (1e5 iterations)" in {
-     val ast = reader("(loop 100000 (lambda (y) (set! x (+ x y))))", scope.symbolCache)
-     eval(reader("(set! x 0)", scope.symbolCache), scope)
+     val ast = reader("(loop 100000 (lambda (y) (set! x (+ x y))))")
+     eval(reader("(set! x 0)"), scope)
 
      using(ranges) in { iteration => eval(ast, scope) }
    }
 
   for (size <- List(20, 30)) {
     performance of s"Fibo $size (native multimethod)" in {
-      eval(reader("(set! fibo (lambda (x) (if (< x 2) 1 (+ (fibo (- x 1)) (fibo (- x 2))))))", scope.symbolCache), scope)
-      val ast = reader(s"(fibo $size)", scope.symbolCache)
+      eval(reader("(set! fibo (lambda (x) (if (< x 2) 1 (+ (fibo (- x 1)) (fibo (- x 2))))))"), scope)
+      val ast = reader(s"(fibo $size)")
 
       time(s"FIBO $size") {
         eval(ast, scope)
@@ -106,8 +106,8 @@ object DispatchPerformance extends PerformanceTest.Quickbenchmark {
       using(ranges) in { iteration => eval(ast, scope) }
     }
     performance of s"Fibo $size (native int speciialized)" in {
-      eval(reader("(set! fibo2 (lambda (x) (if (<<int> x 2) 1 (+<int> (fibo2 (-<int> x 1)) (fibo2 (-<int> x 2))))))", scope.symbolCache), scope)
-      val ast = reader(s"(fibo2 $size)", scope.symbolCache)
+      eval(reader("(set! fibo2 (lambda (x) (if (<<int> x 2) 1 (+<int> (fibo2 (-<int> x 1)) (fibo2 (-<int> x 2))))))"), scope)
+      val ast = reader(s"(fibo2 $size)")
 
       time(s"FIBO $size [INT]") {
         eval(ast, scope)
