@@ -6,7 +6,7 @@ import java.io.{Reader => jReader}
 import tools.jline.console.ConsoleReader
 import tools.jline.console.history.FileHistory
 import language.dynamics
-import annotation.tailrec
+import annotation.{tailrec, switch}
 
 object `package` {
   def mapFromList(list : List[Any]) = Map(list.grouped(2).map { case List(a, b) => a -> b }.toList : _*)
@@ -151,9 +151,12 @@ object `package` {
     if (body.length == 0) throw Error(s"malformed lambda with no body: (lambda $fargs $body)")
 
     new LFunc(scope = Scope(scope), argNames = fargs) {
-      val newBindings : Array[(Sym, Any)] = if (self != null) argNames.map(_ -> null) ++ Array(self -> this)
-                                            else argNames.map(_ -> null)
-      for ((ref, v) <- newBindings) scope(ref) = v
+      val newsyms = if (self != null) argNames ++ Array(self) else argNames
+      var i = 0
+      while (i < newsyms.length) {
+        scope(newsyms(i)) = if (i == argNames.length) this else null
+        i += 1
+      }
 
       def f0 = {
         var idx = 0
@@ -161,7 +164,7 @@ object `package` {
           eval(body(idx), this.scope)
           idx += 1
         }
-        eval(body(body.length-1), this.scope)
+        eval(body(body.length - 1), this.scope)
       }
     }
   }
@@ -218,12 +221,13 @@ object `package` {
   }
   @inline def ifelse(exprs : Array[Any], scope : Scope, self : Sym) = {
     if (eval(exprs(1), scope).asInstanceOf[Boolean]) eval(exprs(2), scope)
-    else eval(exprs(3), scope)
+    else if (exprs.length == 4) eval(exprs(3), scope)
+    else Unit
   }
   @inline def funcall(function : Any, args : Array[Any], scope : Scope) = function match {
       case func : LFunc => func(scope, args)
       case func : MM =>
-        args.length match {
+        (args.length : @switch) match {
           case 1 => func()
           case 2 => func(eval(args(1), scope))
           case 3 => func(eval(args(1), scope), eval(args(2), scope))
@@ -240,16 +244,20 @@ object `package` {
     }
   def eval(expr : Any, scope : Scope, self : Sym = null) : Any = expr match {
       case name : Sym => scope(name.index)
+      case num : Int => num
+      case num : Float => num
+      case num : Double => num
+      case char : Char => char
+      case string : String => string
       case list : Array[Any] =>
         list(0) match {
-          case s : Sym =>
-            if (s.index < dispatch.length && dispatch(s.index) != null) dispatch(s.index)(list, scope, self)
-            else funcall(scope(s.index), list, scope)
+          case s : Sym if (s.index < dispatch.length && dispatch(s.index) != null) => dispatch(s.index)(list, scope, self)
+          case s : Sym => funcall(scope(s.index), list, scope)
           case _ => funcall(eval(list(0), scope), list, scope)
         }
       case map : Map[_, _] => map.map { case (k, v) => eval(k, scope) -> eval(v, scope) }
       case iter : Iterable[Any] => iter.map(v => eval(v, scope))
-      case x @ _ => x
+      case _ => expr
     }
 
   // ------------------------------------------------------------------------------------------------------------
@@ -348,21 +356,6 @@ case class LMM(val name : Sym, var methods : Map[Long, LFunc]) { // Lisp multime
   }
 }
 
-// Native Functions and multimethods
-// case class F0[O](fn : Function0[O]) extends Function0[Any] { @inline def apply() = fn() }
-// case class F1[I, O](fn : Function1[I, O]) extends Function1[Any, Any] { 
-//   @inline def apply(i : Any) = fn(i.asInstanceOf[I])
-// }
-// case class F2[I1, I2, O](fn : Function2[I1, I2, O]) extends Function2[Any, Any, Any] { 
-//   @inline def apply(i1 : Any, i2 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2])
-// }
-// case class F3[I1, I2, I3, O](fn : Function3[I1, I2, I3, O]) extends Function3[Any, Any, Any, Any] { 
-//   @inline def apply(i1 : Any, i2 : Any, i3 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2], i3.asInstanceOf[I3])
-// }
-// case class Fn[O](fn : Function1[Array[Any], O]) extends Function1[Array[Any], Any] { 
-//   @inline def apply(i : Array[Any]) = fn(i)
-// }
-
 abstract class F0n[O] extends Function0[O] { @inline def apply() : O }
 abstract class F1n[I, O] extends Function1[I, O] { @inline def apply(i : I) : O }
 abstract class F2n[I1, I2, O] extends Function2[I1, I2, O] { @inline def apply(i1 : I1, i2 : I2) : O  }
@@ -409,27 +402,21 @@ case class MM(methodList : List[(Array[Byte], AnyRef)]) {
   val tmpSpace4 = Array[Byte](0, 0, 0, 0)
   val methods = new TypeTrie(methodList)
 
-  def apply() = {
-    val fn = methods(tmpSpace0)
-    fn.asInstanceOf[F0n[Any]]()
-  }
+  def apply() = methods(tmpSpace0).asInstanceOf[F0n[Any]]()
   def apply(a : Any) = {
     tmpSpace1(0) = typeOf(a)
-    val fn = methods(tmpSpace1)
-    fn.asInstanceOf[F1n[Any, Any]](a)
+    methods(tmpSpace1).asInstanceOf[F1n[Any, Any]](a)
   }
   def apply(a : Any, b : Any) = {
     tmpSpace2(0) = typeOf(a)
     tmpSpace2(1) = typeOf(b)
-    val fn = methods(tmpSpace2)
-    fn.asInstanceOf[F2n[Any, Any, Any]](a, b)
+    methods(tmpSpace2).asInstanceOf[F2n[Any, Any, Any]](a, b)
   }
   def apply(a : Any, b : Any, c : Any) = {
     tmpSpace3(0) = typeOf(a)
     tmpSpace3(1) = typeOf(b)
     tmpSpace3(2) = typeOf(c)
-    val fn = methods(tmpSpace3)
-    fn.asInstanceOf[F3n[Any, Any, Any, Any]](a, b, c)
+    methods(tmpSpace3).asInstanceOf[F3n[Any, Any, Any, Any]](a, b, c)
   }
 }
 
