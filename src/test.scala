@@ -77,7 +77,7 @@ object Tests {
     val reader = new Reader
     val scope  = Scope(lib.DefaultEnvironment : _*)
 
-    scope(Sym("function")) = Fn({ (xs : List[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) })
+    scope(Sym("function")) = Fn({ (xs : Array[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) })
 
     header("Reading simple expressions")
     reader("function") shouldBe Sym("function")
