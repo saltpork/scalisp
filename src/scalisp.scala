@@ -229,11 +229,11 @@ object `package` {
           case 3 => func(eval(args(1), scope), eval(args(2), scope))
           case 4 => func(eval(args(1), scope), eval(args(2), scope), eval(args(3), scope))
         }
-      case func : Fn[_] => func(args.drop(1).map(e => eval(e, scope)))
-      case func : F0[_] => func()
-      case func : F1[_, _] => func(eval(args(1), scope))
-      case func : F2[_, _, _] => func(eval(args(1), scope), eval(args(2), scope))
-      case func : F3[_, _, _, _] => func(eval(args(1), scope), eval(args(2), scope), eval(args(3), scope))
+      case func : Fn[Any] => func(args.drop(1).map(e => eval(e, scope)))
+      case func : F0n[_] => func()
+      case func : F1n[Any, Any] => func(eval(args(1), scope))
+      case func : F2n[Any, Any, Any] => func(eval(args(1), scope), eval(args(2), scope))
+      case func : F3n[Any, Any, Any, Any] => func(eval(args(1), scope), eval(args(2), scope), eval(args(3), scope))
       case func : LMM => func(scope, args)
       case mac : Macro => eval(mac(args.drop(1)), scope)
       case x @ _ => throw Error(s"$x [a literal value] cannot be used as a function")
@@ -349,19 +349,25 @@ case class LMM(val name : Sym, var methods : Map[Long, LFunc]) { // Lisp multime
 }
 
 // Native Functions and multimethods
-case class F0[O](fn : Function0[O]) extends Function0[Any] { @inline def apply() = fn() }
-case class F1[I, O](fn : Function1[I, O]) extends Function1[Any, Any] { 
-  @inline def apply(i : Any) = fn(i.asInstanceOf[I])
-}
-case class F2[I1, I2, O](fn : Function2[I1, I2, O]) extends Function2[Any, Any, Any] { 
-  @inline def apply(i1 : Any, i2 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2])
-}
-case class F3[I1, I2, I3, O](fn : Function3[I1, I2, I3, O]) extends Function3[Any, Any, Any, Any] { 
-  @inline def apply(i1 : Any, i2 : Any, i3 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2], i3.asInstanceOf[I3])
-}
-case class Fn[O](fn : Function1[Array[Any], O]) extends Function1[Array[Any], Any] { 
-  @inline def apply(i : Array[Any]) = fn(i)
-}
+// case class F0[O](fn : Function0[O]) extends Function0[Any] { @inline def apply() = fn() }
+// case class F1[I, O](fn : Function1[I, O]) extends Function1[Any, Any] { 
+//   @inline def apply(i : Any) = fn(i.asInstanceOf[I])
+// }
+// case class F2[I1, I2, O](fn : Function2[I1, I2, O]) extends Function2[Any, Any, Any] { 
+//   @inline def apply(i1 : Any, i2 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2])
+// }
+// case class F3[I1, I2, I3, O](fn : Function3[I1, I2, I3, O]) extends Function3[Any, Any, Any, Any] { 
+//   @inline def apply(i1 : Any, i2 : Any, i3 : Any) = fn(i1.asInstanceOf[I1], i2.asInstanceOf[I2], i3.asInstanceOf[I3])
+// }
+// case class Fn[O](fn : Function1[Array[Any], O]) extends Function1[Array[Any], Any] { 
+//   @inline def apply(i : Array[Any]) = fn(i)
+// }
+
+abstract class F0n[O] extends Function0[O] { @inline def apply() : O }
+abstract class F1n[I, O] extends Function1[I, O] { @inline def apply(i : I) : O }
+abstract class F2n[I1, I2, O] extends Function2[I1, I2, O] { @inline def apply(i1 : I1, i2 : I2) : O  }
+abstract class F3n[I1, I2, I3, O] extends Function3[I1, I2, I3, O] { @inline def apply(i1 : I1, i2 : I2, i3 : I3) : O }
+abstract class Fn[O] extends Function1[Array[Any], O] { @inline def apply(i : Array[Any]) : O }
 
 class TypeTrie(methods : List[(Array[Byte], AnyRef)]) {
   val trie = (0 to 4).map(x => makeTier).toArray[AnyRef]
@@ -387,16 +393,11 @@ class TypeTrie(methods : List[(Array[Byte], AnyRef)]) {
     var i = 0
     while (i < (sig.length - 1)) {
       if (tier(sig(i)) != null) tier = tier(sig(i)).asInstanceOf[Array[AnyRef]]
-      else return null
+      else throw ArgumentError(s"No method matches prototype: (<native> ${sig.map(a => typeName(a)).mkString(" ")})") //return null
       i += 1
     }
-    return tier(sig(sig.length - 1))
-  }
-  @inline def getFail(sig : Array[Byte]) = {
-    val res = apply(sig)
-    if (res == null) 
-      throw ArgumentError(s"No method matches prototype: (<native> ${sig.map(a => typeName(a)).mkString(" ")})")
-    res
+    if (tier(sig(sig.length - 1)) == null) throw ArgumentError(s"No method matches prototype: (<native> ${sig.map(a => typeName(a)).mkString(" ")})")
+    tier(sig(sig.length - 1))
   }
 }
 
@@ -409,26 +410,26 @@ case class MM(methodList : List[(Array[Byte], AnyRef)]) {
   val methods = new TypeTrie(methodList)
 
   def apply() = {
-    val fn = methods.getFail(tmpSpace0)
-    fn.asInstanceOf[F0[Any]]()
+    val fn = methods(tmpSpace0)
+    fn.asInstanceOf[F0n[Any]]()
   }
   def apply(a : Any) = {
     tmpSpace1(0) = typeOf(a)
-    val fn = methods.getFail(tmpSpace1)
-    fn.asInstanceOf[F1[Any, Any]](a)
+    val fn = methods(tmpSpace1)
+    fn.asInstanceOf[F1n[Any, Any]](a)
   }
   def apply(a : Any, b : Any) = {
     tmpSpace2(0) = typeOf(a)
     tmpSpace2(1) = typeOf(b)
-    val fn = methods.getFail(tmpSpace2)
-    fn.asInstanceOf[F2[Any, Any, Any]](a, b)
+    val fn = methods(tmpSpace2)
+    fn.asInstanceOf[F2n[Any, Any, Any]](a, b)
   }
   def apply(a : Any, b : Any, c : Any) = {
     tmpSpace3(0) = typeOf(a)
     tmpSpace3(1) = typeOf(b)
     tmpSpace3(2) = typeOf(c)
-    val fn = methods.getFail(tmpSpace3)
-    fn.asInstanceOf[F3[Any, Any, Any, Any]](a, b, c)
+    val fn = methods(tmpSpace3)
+    fn.asInstanceOf[F3n[Any, Any, Any, Any]](a, b, c)
   }
 }
 

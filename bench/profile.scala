@@ -14,6 +14,16 @@ object Profile extends {
     val reader  = new Reader
     val scope   = Scope(lib.DefaultEnvironment : _*)
 
+    eval(reader("(set! adder (lambda (x y) (* (+ x y) y)))"), scope)
+    for (size <- List(100000000)) {
+      val ast = reader(s"(loop $size (lambda (n) (adder n 10)))")
+      for (i <- 0 until 10) {
+        time(s"FIBO [iteration: $i, size: $size]") {
+          eval(ast, scope)
+        }
+      }
+    }
+
     eval(reader("(set! fibo (lambda (x) (if (< x 2) 1 (+ (fibo (- x 1)) (fibo (- x 2))))))"), scope)
     for (size <- List(40)) {
       val ast = reader(s"(fibo $size)")

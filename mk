@@ -2,7 +2,7 @@
 set -e
 
 OPTIONS='-S-optimise -S-target:jvm-1.7 -S-deprecation' # -S-Yinline-warnings
-SCALAC="zinc -scala-home /usr/local/scala/lib -cp /usr/local/scala/lib/jline.jar"
+SCALAC="zinc -nailed -scala-home /usr/local/scala/lib -cp /usr/local/scala/lib/jline.jar"
 
 #OPTIONS="-optimise -target:jvm-1.7 -deprecation"
 #SCALAC=scalac

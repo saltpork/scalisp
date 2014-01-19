@@ -77,7 +77,7 @@ object Tests {
     val reader = new Reader
     val scope  = Scope(lib.DefaultEnvironment : _*)
 
-    scope(Sym("function")) = Fn({ (xs : Array[Any]) => xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) })
+    scope(Sym("function")) = new Fn[Float] { def apply(xs : Array[Any]) = xs.foldLeft(0.0f)(_ + _.asInstanceOf[Float]) }
 
     header("Reading simple expressions")
     reader("function") shouldBe Sym("function")
@@ -162,9 +162,9 @@ object Tests {
     eval(reader("(secondlevel 5)"), scope) shouldBe 5
 
     header("Multimethods and dispatch")
-    scope(Sym("mult-method")) = MM(List(Array(IntType)             -> F1({ (a : Int) => 666 }),
-                                        Array(StringType)          -> F1({ (a : String) => "test" }),
-                                        Array(StringType, IntType) -> F2({ (a : String, b : Int) => s"$a -> $b" })))
+    scope(Sym("mult-method")) = MM(List(Array(IntType)             -> new F1n[Int, Int] { def apply(a : Int) = 666 },
+                                        Array(StringType)          -> new F1n[String, String] { def apply(a : String) = "test" },
+                                        Array(StringType, IntType) -> new F2n[String, Int, String] { def apply(a : String, b : Int) = s"$a -> $b" }))
     eval(reader("(mult-method 1)"), scope) shouldBe 666
     eval(reader("(mult-method \"1\")"), scope) shouldBe "test"
     eval(reader("(mult-method \"test\" 2)"), scope) shouldBe "test -> 2"
