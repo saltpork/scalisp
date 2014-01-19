@@ -117,12 +117,17 @@ object `package` {
           val (count, tail) = countSplice(x)
           if (depth == count) Array(Paste, eval(x, scope))
           else full
-        case Array(k, x @ _*) => Array(k) ++ x.map(ex => splice(ex, scope, depth))
+        case _ => sf.flatMap(ex => splice(ex, scope, depth) match { 
+                       case Array(Paste, x : Seq[Any]) => x
+                       case Array(Paste, x : Array[Any]) => x
+                       case x @ _ => Array(x)
+                     }) //Array(k) ++ x.map(ex => splice(ex, scope, depth))
       }
       case args : Map[_, _] => args map { case (k, v) => splice(k, scope, depth) -> splice(v, scope, depth) }
       case args : Iterable[Any] =>
         args.flatMap(ex => splice(ex, scope, depth) match { 
                        case Array(Paste, x : Seq[Any]) => x
+                       case Array(Paste, x : Array[Any]) => x
                        case x @ _ => Array(x)
                      })
       case ex @ _ => ex
@@ -158,7 +163,7 @@ object `package` {
         i += 1
       }
 
-      def f0 = {
+      @inline def f0 = {
         var idx = 0
         while(idx < (body.length-1)) {
           eval(body(idx), this.scope)
@@ -180,10 +185,14 @@ object `package` {
     if (!scope.isDefinedAt(slf)) scope(slf) = LMM(name = slf, methods = Map[Long, LFunc]())
 
     val func = new LFunc(scope = scope, argNames = symtypes.map(_(0))) {
-        val newBindings : Array[(Sym, Any)] = args.map(_ -> null) ++ Array[(Sym, Any)](slf -> scope(slf.index))
-        for ((ref, v) <- newBindings) scope(ref) = v
+        val newsyms = argNames
+        var i = 0
+        while (i < newsyms.length) {
+          scope(newsyms(i)) = if (i == argNames.length) this else null
+          i += 1
+        }
 
-        def f0 = {
+        @inline def f0 = {
           var idx = 0
           while(idx < (body.length-1)) {
             eval(body(idx), this.scope)
@@ -267,7 +276,7 @@ object `package` {
     expr match {
       case Sym(s, i)          => s"'$s"
       case List(xs @ _*)      => s"(${xs.map(e => lispString(e)).mkString(" ")})"
-      case Array(xs @ _*)     => s"<${xs.map(e => lispString(e)).mkString(" ")}>"
+      case Array(xs @ _*)     => s"(${xs.map(e => lispString(e)).mkString(" ")})"
       case Vector(xs @ _*)    => s"[${xs.map(e => lispString(e)).mkString(" ")}]"
       case xs : Set[_]        => s"#{${xs.map(e => lispString(e)).mkString(" ")}}"
       case xs : Map[_, _]     => s"{${xs.map{ case (k, v) => lispString(k) + " " + lispString(v) }.mkString(" ")}}"
@@ -319,7 +328,7 @@ object Scope {
 case class Macro(fn : Array[Any] => Any) { @inline def apply(a : Array[Any]) = fn(a) }
 
 abstract class LFunc(var scope : Scope, val argNames : Array[Sym]) { // Lisp Functions
-  def f0 : Any
+  @inline def f0 : Any
   @inline def apply(outerScope : Scope, rest : Array[Any]) = {
     scope = Scope(scope)
     var idx = 1

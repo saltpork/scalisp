@@ -2,9 +2,9 @@ package scalisp
 import collection.mutable.ArrayBuffer
 
 final class Sym private (val name : String, val index : Int) extends Serializable {
-  override def toString() = s"<$name:$index>"
-  override def hashCode = name.hashCode()
-  override def equals(other : Any) = if (other.isInstanceOf[Sym]) index == other.asInstanceOf[Sym].index else false //this eq other.asInstanceOf[AnyRef]
+  @inline override def toString() = s"<$name:$index>"
+  @inline override def hashCode = name.hashCode()
+  @inline override def equals(other : Any) = if (other.isInstanceOf[Sym]) index == other.asInstanceOf[Sym].index else false //this eq other.asInstanceOf[AnyRef]
 }
 
 object Sym {

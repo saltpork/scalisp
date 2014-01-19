@@ -97,28 +97,27 @@ object Tests {
     reader("\\X") shouldBe 'X'
 
     header("Reading s-expressions")
-    reader("(2)") shouldBe List(2)
-    reader("(2.2)") shouldBe List(2.2f)
-    reader("(2.2 3)") shouldBe List(2.2f, 3)
-    reader("(2.2 3 function)") shouldBe List(2.2f, 3, Sym("function"))
-    reader("(function 2.2)") shouldBe List(Sym("function"), 2.2f)
-    reader("(lambda (x) (+ x 1))") shouldBe List(Sym("lambda"), List(Sym("x")), List(Sym("+"), Sym("x"), 1))
+    lispString(reader("(2)")) shouldBe lispString(List(2))
+    lispString(reader("(2.2)")) shouldBe lispString(List(2.2f))
+    lispString(reader("(2.2 3)")) shouldBe lispString(List[Any](2.2f, 3))
+    lispString(reader("(2.2 3 function)")) shouldBe lispString(List(2.2f, 3, Sym("function")))
+    lispString(reader("(function 2.2)")) shouldBe lispString(List(Sym("function"), 2.2f))
+    lispString(reader("(lambda (x) (+ x 1))")) shouldBe lispString(List(Sym("lambda"), List(Sym("x")), List(Sym("+"), Sym("x"), 1)))
 
     header("Reading with reader macros")
-    reader("#{a b c}") shouldBe Set('a, 'b, 'c)
-    reader("'(a b c)") shouldBe List('quote, List('a, 'b, 'c))
-    reader("{a b c d}") shouldBe Map('a -> 'b, 'c -> 'd)
-    reader("[a b c d]") shouldBe Vector('a, 'b, 'c, 'd)
-    reader("[a #{ b b } (c c) [d d]]") shouldBe Vector('a, Set('b), List('c, 'c), Vector('d, 'd))
-    reader("#{{a a b b} [b b] #{c d}}") shouldBe Set(Map('a -> 'a, 'b -> 'b), Vector('b, 'b), Set('c, 'd))
-    reader("`(test ~x ~@y)") shouldBe List('quasiquote, List('test, List('splice, 'x), List('spliceseq, 'y)))
+    lispString(reader("#{a b c}")) shouldBe lispString(Set('a, 'b, 'c))
+    lispString(reader("'(a b c)")) shouldBe lispString(List('quote, List('a, 'b, 'c)))
+    lispString(reader("{a b c d}")) shouldBe lispString(Map('a -> 'b, 'c -> 'd))
+    lispString(reader("[a b c d]")) shouldBe lispString(Vector('a, 'b, 'c, 'd))
+    lispString(reader("[a #{ b b } (c c) [d d]]")) shouldBe lispString(Vector('a, Set('b), List('c, 'c), Vector('d, 'd)))
+    lispString(reader("#{{a a b b} [b b] #{c d}}")) shouldBe lispString(Set(Map('a -> 'a, 'b -> 'b), Vector('b, 'b), Set('c, 'd)))
+    lispString(reader("`(test ~x ~@y)")) shouldBe lispString(List('quasiquote, List('test, List('splice, 'x), List('spliceseq, 'y))))
 
     header("Special forms")
     eval(reader("(if true 1 2)"), scope) shouldBe 1
     eval(reader("(if false 1 2)"), scope) shouldBe 2
     eval(reader("(if (if true false true) 1 2)"), scope) shouldBe 2
     eval(reader("(if (if false false true) 1 2)"), scope) shouldBe 1
-    println(reader("(def incr (lambda (x) (+ x 1)))"))
     eval(reader("(def incr (lambda (x) (+ x 1)))"), scope)
     eval(reader("(incr 1)"), scope) shouldBe 2
     eval(reader("(incr 4)"), scope) shouldBe 5
@@ -130,35 +129,35 @@ object Tests {
     header("Read and evaluate")
     eval(reader("(function 2.2 3.3 (function 1.0 2.0))"), scope) shouldBe 8.5f
     eval(reader("((lambda (x) (+ x 1)) 1)"), scope) shouldBe 2
-    eval(reader("`(test ~y ~y)"), scope) shouldBe List('test, 4, 4)
-    eval(reader("(set! z '(3 2 1))"), scope) shouldBe List(3, 2, 1)
-    eval(reader("{ y y }"), scope) shouldBe Map(4 -> 4)
-    eval(reader("{ y y 1 z }"), scope) shouldBe Map(4 -> 4, 1 -> List(3, 2, 1))
-    eval(reader("[ y y { 1 z } ]"), scope) shouldBe Vector(4, 4, Map(1 -> List(3, 2, 1)))
-    eval(reader("#{(incr 10) y}"), scope) shouldBe Set(11, 4)
+    lispString(eval(reader("`(test ~y ~y)"), scope)) shouldBe lispString(List('test, 4, 4))
+    lispString(eval(reader("(set! z '(3 2 1))"), scope)) shouldBe lispString(List(3, 2, 1))
+    lispString(eval(reader("{ y y }"), scope)) shouldBe lispString(Map(4 -> 4))
+    lispString(eval(reader("{ y y 1 z }"), scope)) shouldBe lispString(Map(4 -> 4, 1 -> List(3, 2, 1)))
+    lispString(eval(reader("[ y y { 1 z } ]"), scope)) shouldBe lispString(Vector(4, 4, Map(1 -> List(3, 2, 1))))
+    lispString(eval(reader("#{(incr 10) y}"), scope)) shouldBe lispString(Set(11, 4))
     eval(reader("(first '(1 2 3))"), scope) shouldBe 1
-    eval(reader("(rest '(1 2 3))"), scope) shouldBe List(2, 3)
+    lispString(eval(reader("(rest '(1 2 3))"), scope)) shouldBe lispString(List(2, 3))
     eval(reader("(first [1 2 3])"), scope) shouldBe 1
-    eval(reader("(rest [1 2 3])"), scope) shouldBe Vector(2, 3)
+    lispString(eval(reader("(rest [1 2 3])"), scope)) shouldBe lispString(Vector(2, 3))
 
     header("Macros and quoting")
-    eval(reader("(quote (1 2 3))"), scope) shouldBe List(1, 2, 3)
-    eval(reader("(quote (+ 1 4))"), scope) shouldBe List('+, 1, 4)
-    eval(reader("(macro test (x) (cons (quote -) (rest x)))"), scope).toString shouldBe "Macro(<function1>)"
+    lispString(eval(reader("(quote (1 2 3))"), scope)) shouldBe lispString(List(1, 2, 3))
+    lispString(eval(reader("(quote (+ 1 4))"), scope)) shouldBe lispString(List('+, 1, 4))
+    eval(reader("(macro test (x) (cons (quote -) (rest x)))"), scope)
     eval(reader("(test (+ 1 4))"), scope) shouldBe -3
-    eval(reader("(macro m (x) (print \"-- Evaluating: \" x) x)"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(macro m (x) (print \"-- Evaluating: \" x) x)"), scope)
     eval(reader("(m (+ 1 3))"), scope) shouldBe 4
-    eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(macro define (name args body) (list (quote def) name (list (quote lambda) args body)))"), scope)
     eval(reader("(define addxy (x y) (+ x y))"), scope)
     eval(reader("(addxy 1 3)"), scope) shouldBe 4
-    eval(reader("(macro def2 (name args body) `(def ~name (lambda ~args ~body)))"), scope).toString shouldBe "Macro(<function1>)"
+    eval(reader("(macro def2 (name args body) `(def ~name (lambda ~args ~body)))"), scope)
     eval(reader("(def2 addxy2 (x y) (+ x y))"), scope)
     eval(reader("(addxy2 1 3)"), scope) shouldBe 4
-    eval(reader("`(test ~y ~@z)"), scope) shouldBe List('test, 4, 3, 2, 1)
-    eval(reader("`{ ~y ~y }"), scope) shouldBe Map(4 -> 4)
-    eval(reader("((lambda (y) `(print `(+ ~~y ~@z))) 7)"), scope) shouldBe List('print, List('quasiquote, List('+, 7, List('spliceseq, 'z))))
-    eval(reader("(macro twolevel (x) `(macro secondlevel (y) `(- ~~x ~y)))"), scope).toString shouldBe "Macro(<function1>)"
-    eval(reader("(twolevel 10)"), scope).toString shouldBe "Macro(<function1>)"
+    lispString(eval(reader("`(test ~y ~@z)"), scope)) shouldBe lispString(List('test, 4, 3, 2, 1))
+    lispString(eval(reader("`{ ~y ~y }"), scope)) shouldBe lispString(Map(4 -> 4))
+    lispString(eval(reader("((lambda (y) `(print `(+ ~~y ~@z))) 7)"), scope)) shouldBe lispString(List('print, List('quasiquote, List('+, 7, List('spliceseq, 'z)))))
+    eval(reader("(macro twolevel (x) `(macro secondlevel (y) `(- ~~x ~y)))"), scope)
+    eval(reader("(twolevel 10)"), scope)
     eval(reader("(secondlevel 5)"), scope) shouldBe 5
 
     header("Multimethods and dispatch")
